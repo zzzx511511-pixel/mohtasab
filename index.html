@@ -67,39 +67,6 @@
     display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
   }
   .brand{ display:flex; align-items:center; gap:12px; }
-  .logo-mark{
-    position:relative;
-    width:52px; height:52px; flex:none;
-    border-radius:14px;
-    background:linear-gradient(155deg, var(--ink), var(--forest));
-    box-shadow: var(--shadow);
-    display:flex; align-items:center; justify-content:center;
-  }
-  .logo-mark::before{
-    content:"";
-    width:26px; height:18px;
-    border-radius:2px 8px 2px 8px / 8px 2px 8px 2px;
-    background:
-      linear-gradient(90deg, var(--gold-soft) 50%, transparent 50%),
-      linear-gradient(90deg, transparent 50%, var(--gold-soft) 50%);
-    background-size:50% 100%, 50% 100%;
-    background-repeat:no-repeat;
-    background-position: left, right;
-    clip-path: polygon(0 15%, 50% 0%, 100% 15%, 100% 100%, 50% 85%, 0% 100%);
-    opacity:0.95;
-  }
-  .logo-mark::after{
-    content:"";
-    position:absolute; left:-4px; bottom:-4px;
-    width:20px; height:20px; border-radius:50%;
-    background:var(--teal);
-    border:2.5px solid var(--paper);
-    box-shadow:0 2px 6px rgba(0,0,0,0.25);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l5 5L19 7' fill='none' stroke='%23fffdf8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    background-repeat:no-repeat;
-    background-position:center;
-    background-size:11px 11px;
-  }
   .brand-text .title{ font-weight:900; font-size:1.35rem; letter-spacing:0.5px; color:var(--ink); }
   .brand-text .sub{ font-size:0.72rem; color:var(--forest); opacity:0.85; font-weight:500; }
   .topbar-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -481,7 +448,6 @@
 <!-- ===================== DASHBOARD ===================== -->
 <header class="topbar">
   <div class="brand">
-    <div class="logo-mark" aria-hidden="true"></div>
     <div class="brand-text">
       <div class="title">مُحْتَسَب</div>
       <div class="sub">النية أولاً، ثم العمل</div>
@@ -638,6 +604,6 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
