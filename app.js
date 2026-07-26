@@ -461,6 +461,24 @@
     return fetch(url).then(r => r.json()).then(j => j.data.timings);
   }
 
+  // Arabic display names for common Saudi cities — Aladhan needs the English
+  // spelling to resolve the request, but the badge must always read in Arabic.
+  const CITY_AR_NAMES = {
+    'riyadh': 'الرياض', 'jeddah': 'جدة', 'jiddah': 'جدة',
+    'mecca': 'مكة المكرمة', 'makkah': 'مكة المكرمة',
+    'medina': 'المدينة المنورة', 'madinah': 'المدينة المنورة',
+    'dammam': 'الدمام', 'khobar': 'الخبر', 'al khobar': 'الخبر',
+    'dhahran': 'الظهران', 'taif': 'الطائف', 'tabuk': 'تبوك', 'abha': 'أبها',
+    'khamis mushait': 'خميس مشيط', 'jubail': 'الجبيل', 'najran': 'نجران',
+    'jazan': 'جازان', 'jizan': 'جازان', 'hail': 'حائل', 'qassim': 'القصيم',
+    'buraidah': 'بريدة', 'yanbu': 'ينبع', 'al ahsa': 'الأحساء',
+    'hofuf': 'الهفوف', 'sakaka': 'سكاكا', 'arar': 'عرعر', 'baha': 'الباحة'
+  };
+  function cityDisplayName(city){
+    if (!city) return 'الرياض';
+    return CITY_AR_NAMES[city.trim().toLowerCase()] || city;
+  }
+
   // Rounded to ~11km — coarse enough to be a stable cache key, fine enough to
   // tell Riyadh from Qassim apart so a real move busts the day's cache.
   function coordKey(lat, lon){ return lat.toFixed(1)+','+lon.toFixed(1); }
@@ -483,7 +501,7 @@
       const cacheKey = 'mohtasab_timings_'+todayKey()+'_manual_'+pref.city;
       const cached = safeGet(cacheKey);
       if (cached){ try{ return Promise.resolve(JSON.parse(cached)); }catch(e){} }
-      el.cityLabel.textContent = pref.city;
+      el.cityLabel.textContent = cityDisplayName(pref.city);
       return fetchTimingsByCity(pref.city, pref.country)
         .then(t => { safeSet(cacheKey, JSON.stringify(t)); return t; });
     }
@@ -883,7 +901,7 @@
     const city = el.cityInput.value.trim() || 'Riyadh';
     const country = el.countryInput.value.trim() || 'Saudi Arabia';
     setLocationPref({ mode:'manual', city, country });
-    el.cityLabel.textContent = city;
+    el.cityLabel.textContent = cityDisplayName(city);
     el.modalBackdrop.classList.remove('show');
     // Cache keys are now scoped per-city, so the new manual city just gets
     // its own fresh entry — nothing stale to clean up here.
