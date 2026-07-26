@@ -565,29 +565,65 @@
   let slotsToday = [];
   const timers = [];
 
-  function clearTimers(){ timers.forEach(t => clearTimeout(t)); timers.length = 0; }
+  // Missed-while-closed slots trickle out one at a time instead of firing
+  // in a pile — see missedQueue/advanceMissedQueue below.
+  const MISSED_QUEUE_GAP_MS = 7 * 60 * 1000;
+  let missedQueue = [];
+  let missedQueueTimer = null;
+
+  function clearTimers(){
+    timers.forEach(t => clearTimeout(t)); timers.length = 0;
+    if (missedQueueTimer){ clearTimeout(missedQueueTimer); missedQueueTimer = null; }
+    missedQueue = [];
+  }
 
   function scheduleToday(timings){
     slotsToday = computeSlotTimes(timings);
     clearTimers();
     const now = new Date();
 
+    const missed = [];
     slotsToday.forEach(slot => {
       if (isFired(slot.id)) return;
       const delay = slot.time.getTime() - now.getTime();
       if (delay <= 0){
-        // Missed while app was closed — catch up immediately on open.
-        timers.push(setTimeout(() => triggerSlot(slot), 400));
+        missed.push(slot);
       } else {
         timers.push(setTimeout(() => triggerSlot(slot), delay));
       }
     });
+
+    if (missed.length){
+      // Several reminders piling up while the app was closed shouldn't all
+      // fire back-to-back — show the oldest (earliest scheduled) now, and
+      // queue the rest to appear one at a time on completion, or after a
+      // minimum spacing if the current one is left hanging.
+      missed.sort((a, b) => a.time - b.time);
+      timers.push(setTimeout(() => triggerSlot(missed[0]), 400));
+      missedQueue = missed.slice(1);
+      if (missedQueue.length) missedQueueTimer = setTimeout(advanceMissedQueue, MISSED_QUEUE_GAP_MS);
+    }
 
     // Two light knowledge notifications, spaced between the major slots.
     scheduleLightNotifications(slotsToday);
     renderSlotList();
     renderNextSlot();
     applyPendingSlotAction();
+  }
+
+  function advanceMissedQueue(){
+    if (missedQueueTimer){ clearTimeout(missedQueueTimer); missedQueueTimer = null; }
+    if (!missedQueue.length) return;
+    if (el.overlay.classList.contains('show')){
+      // Still busy with the current reminder — check back after the gap
+      // instead of stacking the next one on top of it.
+      missedQueueTimer = setTimeout(advanceMissedQueue, MISSED_QUEUE_GAP_MS);
+      return;
+    }
+    const next = missedQueue.shift();
+    if (isFired(next.id)){ advanceMissedQueue(); return; }
+    timers.push(setTimeout(() => triggerSlot(next), 400));
+    if (missedQueue.length) missedQueueTimer = setTimeout(advanceMissedQueue, MISSED_QUEUE_GAP_MS);
   }
 
   function triggerSlot(slot){
@@ -640,6 +676,12 @@
       const delay = t.getTime() - Date.now();
       const fire = () => {
         if (safeGet(key) === '1') return;
+        if (document.visibilityState === 'visible' && el.overlay.classList.contains('show')){
+          // A major reminder overlay is up — never stack the light banner
+          // on top of it. Leave the key unset and try again shortly.
+          timers.push(setTimeout(fire, 30000));
+          return;
+        }
         safeSet(key,'1');
         const snip = knowledgeSnippets[nextSnippetIndex()];
         if (document.visibilityState === 'visible'){
@@ -843,6 +885,7 @@
     document.body.style.overflow = '';
     document.removeEventListener('keydown', trapFocus);
     if (state.lastFocusedEl && state.lastFocusedEl.focus) state.lastFocusedEl.focus();
+    advanceMissedQueue();
   }
 
   el.btnComplete.addEventListener('click', function(){
@@ -1000,7 +1043,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=6').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=7').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
