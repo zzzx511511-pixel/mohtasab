@@ -1,5 +1,53 @@
 // sw.js — مُحْتَسَب
-const CACHE_NAME = 'mohtasab-cache-v7';
+// Firebase Messaging is loaded defensively: if gstatic is unreachable or the
+// config is still unset, the whole SW must NOT fail to install — the local
+// notification path below (the fallback for when FCM isn't active) has no
+// external dependency of its own and needs to keep working regardless.
+try{
+  importScripts('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js');
+
+  // Same config as app.js's FIREBASE_CONFIG — must be kept in sync by hand.
+  // The two REPLACE_WITH_* placeholders come from Firebase Console → ⚙️
+  // Project settings → General → Your apps → Web app → "SDK setup and
+  // configuration".
+  firebase.initializeApp({
+    apiKey: 'AIzaSyDY788zoCkbK5lsby6lHD54LnQ7SUm9eV0',
+    authDomain: 'mohtasab.firebaseapp.com',
+    projectId: 'mohtasab',
+    storageBucket: 'mohtasab.appspot.com',
+    messagingSenderId: 'REPLACE_WITH_MESSAGING_SENDER_ID',
+    appId: 'REPLACE_WITH_APP_ID'
+  });
+
+  // Real server-sent push (FCM) arriving while the app is backgrounded/closed.
+  // Foreground pushes are handled by messaging.onMessage() in app.js instead —
+  // this only fires for the background case, same as notifyBackground() below.
+  const swMessaging = firebase.messaging();
+  swMessaging.onBackgroundMessage((payload) => {
+    const n = payload.notification || {};
+    const d = payload.data || {};
+    self.registration.showNotification(n.title || 'مُحتسب', {
+      body: n.body || '',
+      icon: 'icon-192.png',
+      badge: 'icon-192.png',
+      tag: d.tag || 'mohtasab',
+      renotify: true,
+      data: { slot: d.slot },
+      dir: 'rtl',
+      lang: 'ar',
+      requireInteraction: true,
+      actions: d.mode === 'quran'
+        ? [{ action:'complete', title:'✅ قرأتها والحمد لله' }, { action:'open', title:'📖 افتح للقراءة' }]
+        : [{ action:'open', title: d.mode === 'tahlil' ? '🌙 افتح لإتمام التذكير' : '📿 افتح لإتمام الذكر' }]
+    });
+  });
+}catch(e){
+  // FCM background handling unavailable this session — local notifications
+  // (below) are unaffected and remain the fallback.
+}
+
+const CACHE_NAME = 'mohtasab-cache-v8';
 const CORE_ASSETS = [
   './',
   './index.html',

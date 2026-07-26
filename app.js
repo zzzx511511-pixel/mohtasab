@@ -532,6 +532,112 @@
       });
   }
 
+  /* ================= Firebase Cloud Messaging (server-sent push) ================= */
+  // Real push delivered by a scheduled Cloud Function (functions/index.js),
+  // so reminders arrive even if the phone has been locked/closed for hours —
+  // something no web page's own setTimeout can do. The existing local
+  // scheduling (below) stays wired up as-is for the foreground overlay UI,
+  // and is used for BACKGROUND notifications too, but only as a fallback if
+  // FCM registration doesn't succeed (see the `fcmActive` guard in triggerSlot).
+  const FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyDY788zoCkbK5lsby6lHD54LnQ7SUm9eV0',
+    authDomain: 'mohtasab.firebaseapp.com',
+    projectId: 'mohtasab',
+    storageBucket: 'mohtasab.appspot.com',
+    // Firebase Console → ⚙️ Project settings → General → Your apps → Web app
+    // → "SDK setup and configuration" — paste the two values from there.
+    messagingSenderId: 'REPLACE_WITH_MESSAGING_SENDER_ID',
+    appId: 'REPLACE_WITH_APP_ID'
+  };
+  const FCM_VAPID_KEY = 'BKxe3VIufbh06hqT9wvzmEQyNNpnpXkUmnM4PQIU8ziNnzau38Jw6E71HnnFfRQKTW_Tb1Rpe2KG_tn4hGVdlA4';
+
+  let fcmActive = false;
+  let fcmUid = null;
+  let fcmToken = null;
+
+  // Best-known location to hand the server, since it has no GPS of its own:
+  // the manually-pinned city as-is, or a fresh/last-known GPS fix in auto mode.
+  function computeProfileLocation(){
+    const pref = getLocationPref();
+    if (pref && pref.mode === 'manual'){
+      return Promise.resolve({ mode:'city', city: pref.city, country: pref.country });
+    }
+    return getFreshPosition()
+      .then(loc => ({ mode:'coords', lat: loc.lat, lon: loc.lon }))
+      .catch(() => {
+        let lastFix = null;
+        try{ lastFix = JSON.parse(safeGet(LAST_FIX_KEY) || 'null'); }catch(e){}
+        if (lastFix) return { mode:'coords', lat: lastFix.lat, lon: lastFix.lon };
+        return { mode:'city', city:'Riyadh', country:'Saudi Arabia' };
+      });
+  }
+
+  function saveUserProfile(token){
+    if (!fcmUid || typeof firebase === 'undefined') return Promise.resolve();
+    return computeProfileLocation().then(location =>
+      firebase.firestore().collection('users').doc(fcmUid).set({
+        fcmToken: token,
+        location,
+        level: state.level,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge:true })
+    ).catch(() => {});
+  }
+
+  // Re-sends the profile when the city or level changes, so the server acts
+  // on current data — only meaningful once a token exists in the first place.
+  function resyncProfileIfActive(){
+    if (fcmActive && fcmToken) saveUserProfile(fcmToken);
+  }
+
+  // Mirrors markFired's own key in Firestore so the Cloud Function knows this
+  // slot is already handled and skips sending a redundant push for it.
+  function syncFiredToCloud(slotId){
+    if (!fcmUid || typeof firebase === 'undefined') return;
+    try{
+      firebase.firestore().collection('users').doc(fcmUid)
+        .collection('dailyState').doc(todayKey())
+        .set({ firedSlots: { [slotId]: true } }, { merge:true })
+        .catch(() => {});
+    }catch(e){}
+  }
+
+  function initFirebaseMessaging(){
+    const requestPermission = () => new Promise(resolve => {
+      if (!('Notification' in window)){ resolve('unsupported'); return; }
+      if (Notification.permission !== 'default'){ resolve(Notification.permission); return; }
+      try{ Notification.requestPermission().then(resolve).catch(() => resolve('denied')); }
+      catch(e){ resolve('denied'); }
+    });
+    const withTimeout = (p, ms) => Promise.race([p, new Promise(res => setTimeout(() => res(null), ms))]);
+
+    return requestPermission().then(permission => {
+      if (permission !== 'granted' || typeof firebase === 'undefined' || !('serviceWorker' in navigator)) return null;
+      try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){ /* already initialized */ }
+      if (!firebase.messaging || !firebase.messaging.isSupported || !firebase.messaging.isSupported()) return null;
+
+      return withTimeout(
+        firebase.auth().signInAnonymously()
+          .then(cred => { fcmUid = cred.user.uid; return navigator.serviceWorker.ready; })
+          .then(reg => firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg }))
+          .then(token => token ? saveUserProfile(token).then(() => token) : null)
+          .catch(() => null),
+        8000
+      );
+    }).then(token => {
+      fcmToken = token || null;
+      fcmActive = !!token;
+      if (fcmActive){
+        firebase.messaging().onMessage(payload => {
+          if (el.overlay.classList.contains('show')) return; // never stack over an open reminder
+          const n = payload.notification || {};
+          if (n.title || n.body) showToast((n.title||'') + (n.body ? ' — ' + n.body : ''));
+        });
+      }
+      return fcmActive;
+    }).catch(() => { fcmActive = false; return false; });
+  }
+
   /* ================= Scheduling engine ================= */
   // Slot times are computed off whichever level's slot list is active
   // (see LEVELS above) — 3, 5, or 7 reminders, each tied to a real prayer time.
@@ -560,7 +666,7 @@
 
   function firedKey(slotId){ return 'mohtasab_fired_'+todayKey()+'_'+slotId; }
   function isFired(slotId){ return safeGet(firedKey(slotId)) === '1'; }
-  function markFired(slotId){ safeSet(firedKey(slotId), '1'); }
+  function markFired(slotId){ safeSet(firedKey(slotId), '1'); syncFiredToCloud(slotId); }
 
   let slotsToday = [];
   const timers = [];
@@ -630,7 +736,9 @@
     if (isFired(slot.id)) return;
     if (document.visibilityState === 'visible'){
       openOverlayForSlot(slot);
-    } else {
+    } else if (!fcmActive){
+      // Backgrounded/closed catch-up — only the local fallback path's job.
+      // When FCM is active the scheduled Cloud Function delivers this instead.
       notifyBackground(slot.label, 'اضغط لفتح ' + (slot.mode === 'quran' ? 'ورد القرآن' : 'الأذكار') + ' الآن', slot.id, true, slot.mode);
       nagRepeat(slot, 1);
     }
@@ -949,6 +1057,7 @@
     // Cache keys are now scoped per-city, so the new manual city just gets
     // its own fresh entry — nothing stale to clean up here.
     initSchedule();
+    resyncProfileIfActive();
     showToast('✅ تم تحديث موقعك ومواعيد اليوم');
   });
 
@@ -978,6 +1087,7 @@
     // Slot list/ids change with the level — recompute today's schedule under
     // the new list (reuses today's already-cached prayer timings if present).
     initSchedule();
+    resyncProfileIfActive();
     showToast('✅ تم التحويل لدرجة «' + getLevel().label + '»');
   }
 
@@ -1043,7 +1153,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=9').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=10').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
@@ -1054,12 +1164,12 @@
       }
     });
   }
-  if ('Notification' in window && Notification.permission === 'default'){
-    // Ask once, quietly, without blocking initial render.
-    setTimeout(() => { try{ Notification.requestPermission(); }catch(e){} }, 3000);
-  }
-
+  // initFirebaseMessaging() itself asks for notification permission (needed
+  // either way — FCM or the local fallback) before scheduling starts, so
+  // triggerSlot() has a settled fcmActive value the first time it runs.
   fetchQuran();
-  initSchedule();
-  scheduleMidnightRefresh();
+  initFirebaseMessaging().then(() => {
+    initSchedule();
+    scheduleMidnightRefresh();
+  });
 })();

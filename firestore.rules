@@ -1,0 +1,16 @@
+rules_version = '2';
+
+// Every user is an anonymous Firebase Auth account (see initFirebaseMessaging
+// in app.js) whose uid is the document id — so each device can only ever
+// read or write its own profile and daily reminder state, never anyone else's.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /dailyState/{dateKey} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}
