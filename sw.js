@@ -16,8 +16,8 @@ try{
     authDomain: 'mohtasab.firebaseapp.com',
     projectId: 'mohtasab',
     storageBucket: 'mohtasab.appspot.com',
-    messagingSenderId: 'REPLACE_WITH_MESSAGING_SENDER_ID',
-    appId: 'REPLACE_WITH_APP_ID'
+    messagingSenderId: '351787865386',
+    appId: '1:351787865386:web:912acb127d0756cff03a53'
   });
 
   // Real server-sent push (FCM) arriving while the app is backgrounded/closed.
@@ -47,7 +47,7 @@ try{
   // (below) are unaffected and remain the fallback.
 }
 
-const CACHE_NAME = 'mohtasab-cache-v8';
+const CACHE_NAME = 'mohtasab-cache-v9';
 const CORE_ASSETS = [
   './',
   './index.html',

@@ -546,8 +546,8 @@
     storageBucket: 'mohtasab.appspot.com',
     // Firebase Console → ⚙️ Project settings → General → Your apps → Web app
     // → "SDK setup and configuration" — paste the two values from there.
-    messagingSenderId: 'REPLACE_WITH_MESSAGING_SENDER_ID',
-    appId: 'REPLACE_WITH_APP_ID'
+    messagingSenderId: '351787865386',
+    appId: '1:351787865386:web:912acb127d0756cff03a53'
   };
   const FCM_VAPID_KEY = 'BKxe3VIufbh06hqT9wvzmEQyNNpnpXkUmnM4PQIU8ziNnzau38Jw6E71HnnFfRQKTW_Tb1Rpe2KG_tn4hGVdlA4';
 
@@ -1153,7 +1153,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=10').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=11').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
