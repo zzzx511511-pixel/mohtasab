@@ -1,5 +1,5 @@
 // sw.js — مُحْتَسَب
-const CACHE_NAME = 'mohtasab-cache-v6';
+const CACHE_NAME = 'mohtasab-cache-v7';
 const CORE_ASSETS = [
   './',
   './index.html',
