@@ -34,6 +34,7 @@
     cityLabel: document.getElementById('cityLabel'),
     nextSlot: document.getElementById('nextSlot'),
     slotList: document.getElementById('slotList'),
+    prayerTimesList: document.getElementById('prayerTimesList'),
     dataStatus: document.getElementById('dataStatus'),
     heroTitle: document.getElementById('heroTitle'),
     overlay: document.getElementById('overlay'),
@@ -649,6 +650,25 @@
     return d;
   }
 
+  // The 5 daily prayer times exactly as Aladhan returns them — shown in their
+  // own card, separate from the offset reminder times below, so the user can
+  // compare the real adhan time against the reminder and sanity-check their
+  // location.
+  const PRAYER_DISPLAY = [
+    { key:'Fajr',    label:'الفجر' },
+    { key:'Dhuhr',   label:'الظهر' },
+    { key:'Asr',     label:'العصر' },
+    { key:'Maghrib', label:'المغرب' },
+    { key:'Isha',    label:'العشاء' }
+  ];
+  function cleanTime(hm){ return (hm || '').replace(/\s*\(.*\)/, ''); }
+  function renderPrayerTimesList(timings){
+    if (!timings || !el.prayerTimesList) return;
+    el.prayerTimesList.innerHTML = PRAYER_DISPLAY.map(p =>
+      '<div class="slot-item"><b>' + p.label + '</b><span>' + cleanTime(timings[p.key]) + '</span></div>'
+    ).join('');
+  }
+
   function computeSlotTimes(timings){
     const base = new Date();
     return getLevel().slots.map(def => {
@@ -684,6 +704,7 @@
   }
 
   function scheduleToday(timings){
+    renderPrayerTimesList(timings);
     slotsToday = computeSlotTimes(timings);
     clearTimers();
     const now = new Date();
@@ -1153,7 +1174,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=11').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=12').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
