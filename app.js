@@ -82,10 +82,18 @@
     levelLabel: document.getElementById('levelLabel'),
     levelModalBackdrop: document.getElementById('levelModalBackdrop'),
     levelOptions: document.getElementById('levelOptions'),
-    levelModalCancel: document.getElementById('levelModalCancel')
+    levelModalCancel: document.getElementById('levelModalCancel'),
+    dailyBenefitBox: document.getElementById('dailyBenefitBox'),
+    dailyBenefitBody: document.getElementById('dailyBenefitBody')
   };
 
-  el.bannerClose.addEventListener('click', () => el.banner.classList.remove('show'));
+  el.bannerClose.addEventListener('click', (e) => { e.stopPropagation(); el.banner.classList.remove('show'); });
+  // Tapping the banner itself (not the ✕) opens today's benefit, matching
+  // what a tap on the background notification does.
+  el.banner.addEventListener('click', () => {
+    el.banner.classList.remove('show');
+    openDailyBenefitSection();
+  });
 
   /* ================= Fixed content: dhikr (spec-compliant caps) ================= */
   // Every evidence line was checked against the primary hadith/tafsir
@@ -174,27 +182,176 @@
     "احتسب هذه اللحظة عند الله: «إنما الأعمال بالنيات، وإنما لكل امرئ ما نوى» — متفق عليه: رواه البخاري (١) ومسلم (١٩٠٧) عن عمر بن الخطاب رضي الله عنه."
   ];
 
-  // Light knowledge notifications shown between the major reminders — six
-  // categories, rotated (not random) so consecutive notifications don't
-  // repeat a type. Every entry checked against dorar.net / hadeethenc.com
-  // for exact wording, narrator, and book/number before inclusion.
-  const knowledgeSnippets = [
-    {icon:'💡', title:'حديث نبوي', text:'«الطُّهُورُ شَطْرُ الْإِيمَانِ» — رواه مسلم (٢٢٣) عن أبي مالك الأشعري رضي الله عنه.'},
-    {icon:'🤲', title:'دعاء مأثور', text:'سيد الاستغفار: «اللهم أنت ربي لا إله إلا أنت، خلقتني وأنا عبدك، وأنا على عهدك ووعدك ما استطعت، أعوذ بك من شر ما صنعت، أبوء لك بنعمتك عليّ، وأبوء بذنبي فاغفر لي، فإنه لا يغفر الذنوب إلا أنت» — رواه البخاري (٦٣٠٦) عن شداد بن أوس رضي الله عنه.'},
-    {icon:'📖', title:'تفسير ميسّر', text:'قال تعالى: «وَمَن يَتَّقِ اللَّهَ يَجْعَل لَّهُ مَخْرَجًا» [سورة الطلاق: ٢] — وعد إلهي بالفرج لمن التزم التقوى في أموره كلها.'},
-    {icon:'🦷', title:'سنّة مهجورة', text:'السواك — كان النبي ﷺ يحافظ عليه عند كل صلاة: «لولا أن أشقّ على أمتي لأمرتهم بالسواك مع كل صلاة» — متفق عليه: رواه البخاري (٨٨٧) ومسلم (٢٥٢) عن أبي هريرة رضي الله عنه.'},
-    {icon:'🕌', title:'من أثر السلف', text:'قال شيخ الإسلام ابن تيمية رحمه الله: «القلب لا يصلح ولا يفلح ولا يسكن ولا يطمئن إلا بعبادة ربه وحبه والإنابة إليه» — مجموع الفتاوى (١٠/١٩٤).'},
-    {icon:'📜', title:'من سيرته ﷺ', text:'كان غلام يهودي يخدم النبي ﷺ فمرض، فزاره ﷺ وقعد عند رأسه وقال له: «أسلم»، فنظر الغلام إلى أبيه، فقال له: أطع أبا القاسم، فأسلم — فخرج النبي ﷺ وهو يقول: «الحمد لله الذي أنقذه من النار» — رواه البخاري (١٣٥٦) عن أنس بن مالك رضي الله عنه.'},
-    {icon:'💡', title:'حديث نبوي', text:'«مَن سلك طريقًا يلتمس فيه علمًا سهّل الله له به طريقًا إلى الجنة» — رواه مسلم (٢٦٩٩) عن أبي هريرة رضي الله عنه.'},
-    {icon:'📜', title:'من أثر الصحابة', text:'قاتل المائة نفس: رجل قتل تسعة وتسعين إنسانًا ثم أراد التوبة، فدُلّ على أرض صالحة يهاجر إليها، فأدركه الموت في الطريق، فقاسته ملائكة الرحمة والعذاب فوجدوه أقرب للأرض الصالحة بشبر فغفر الله له — متفق عليه: رواه البخاري (٣٤٧٠) ومسلم (٢٧٦٦) عن أبي سعيد الخدري رضي الله عنه.'}
+  /* ================= Daily benefit pools (hadith / tafsir / athar) ================= */
+  // "فائدة اليوم" (today's benefit) — one item, fixed for the whole calendar
+  // day regardless of how many times the app is opened or how many light
+  // notifications fire. Sat–Thu alternates hadith/tafsir from large fetched
+  // pools; Friday draws from the small manual athar/companion-stories pool.
+
+  const HADITH_CACHE_KEY = 'mohtasab_hadith_v1';
+  const TAFSIR_CACHE_KEY = 'mohtasab_tafsir_v1';
+  const HADITH_MAX_WORDS = 40; // keeps entries short enough to read in one glance
+
+  let hadithPool = null; // [{ text, number }] — filled in from cache and/or network
+  let tafsirPool = null; // [{ surah, surahName, ayah, text }]
+
+  function loadCachedPool(key){
+    try{ return JSON.parse(safeGet(key) || 'null'); }catch(e){ return null; }
+  }
+
+  function fetchHadithPool(){
+    const cached = loadCachedPool(HADITH_CACHE_KEY);
+    if (cached){ hadithPool = cached; renderDailyBenefit(); }
+    if (!navigator.onLine && cached) return;
+
+    fetch('https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions/ara-bukhari.min.json')
+      .then(r => r.json())
+      .then(json => {
+        const raw = (json && json.hadiths) || [];
+        const filtered = raw
+          .filter(h => h && h.text && h.text.trim().split(/\s+/).length <= HADITH_MAX_WORDS)
+          .map(h => ({ text: h.text.trim(), number: h.hadithnumber }));
+        if (!filtered.length) return; // malformed/empty response — keep whatever cache we had
+        hadithPool = filtered;
+        safeSet(HADITH_CACHE_KEY, JSON.stringify(filtered));
+        renderDailyBenefit();
+      })
+      .catch(() => {});
+  }
+
+  function fetchTafsirPool(){
+    const cached = loadCachedPool(TAFSIR_CACHE_KEY);
+    if (cached){ tafsirPool = cached; renderDailyBenefit(); }
+    if (!navigator.onLine && cached) return;
+
+    fetch('https://api.alquran.cloud/v1/quran/ar.muyassar')
+      .then(r => r.json())
+      .then(json => {
+        const surahs = (json && json.data && json.data.surahs) || [];
+        const flat = [];
+        surahs.forEach(s => {
+          (s.ayahs || []).forEach(a => {
+            flat.push({ surah: s.number, surahName: s.name, ayah: a.numberInSurah, text: a.text });
+          });
+        });
+        if (!flat.length) return;
+        tafsirPool = flat;
+        safeSet(TAFSIR_CACHE_KEY, JSON.stringify(flat));
+        renderDailyBenefit();
+      })
+      .catch(() => {});
+  }
+
+  // Manual athar/companion-stories pool — Friday only. Source: موسوعة الأخلاق
+  // والسلوك، الدرر السنية (dorar.net); each entry traces to its own classical
+  // reference the same way every other quote in the app does.
+  //
+  // ⚠️ Only the ابن تيمية entry is verified (carried over from the app's
+  // previous knowledgeSnippets array). The other 8 are placeholders — see
+  // chat: the real checked text + reference for each is still needed before
+  // this pool is genuinely ready for Fridays.
+  const atharPool = [
+    {label:'من أثر السلف', text:'قال شيخ الإسلام ابن تيمية رحمه الله: «القلب لا يصلح ولا يفلح ولا يسكن ولا يطمئن إلا بعبادة ربه وحبه والإنابة إليه»', source:'مجموع الفتاوى (١٠/١٩٤)'},
+    {label:'من أثر السلف', text:'⚠️ يحتاج نصًا موثّقًا من الدرر السنية عن ابن القيم رحمه الله', source:'⚠️ بانتظار المصدر الدقيق'},
+    {label:'من أثر السلف', text:'⚠️ يحتاج نصًا موثّقًا من الدرر السنية عن الحسن البصري رحمه الله', source:'⚠️ بانتظار المصدر الدقيق'},
+    {label:'من أثر الصحابة', text:'⚠️ يحتاج نصًا موثّقًا من الدرر السنية عن عمر بن الخطاب رضي الله عنه', source:'⚠️ بانتظار المصدر الدقيق'},
+    {label:'من أثر الصحابة', text:'⚠️ يحتاج نصًا موثّقًا آخر من الدرر السنية عن عمر بن الخطاب رضي الله عنه', source:'⚠️ بانتظار المصدر الدقيق'},
+    {label:'من أثر السلف', text:'⚠️ يحتاج نصًا موثّقًا من الدرر السنية عن الإمام مالك رحمه الله', source:'⚠️ بانتظار المصدر الدقيق'},
+    {label:'من أثر الصحابة', text:'⚠️ يحتاج نصًا موثّقًا من الدرر السنية عن عمرو بن العاص رضي الله عنه', source:'⚠️ بانتظار المصدر الدقيق'},
+    {label:'من أثر السلف', text:'⚠️ يحتاج نصًا موثّقًا من الدرر السنية عن عمر بن عبد العزيز رحمه الله', source:'⚠️ بانتظار المصدر الدقيق'},
+    {label:'من أثر الصحابة', text:'⚠️ يحتاج نصًا موثّقًا من الدرر السنية عن حكيم بن حزام رضي الله عنه', source:'⚠️ بانتظار المصدر الدقيق'}
   ];
 
-  function nextSnippetIndex(){
-    const key = 'mohtasab_snippet_idx';
-    const cur = Number(safeGet(key) || 0);
-    const next = (cur + 1) % knowledgeSnippets.length;
-    safeSet(key, next);
-    return cur % knowledgeSnippets.length;
+  const DAILY_BENEFIT_KEY = 'mohtasab_daily_benefit';
+
+  function rotate(idxKey, poolLen){
+    const cur = Number(safeGet(idxKey) || 0) % poolLen;
+    safeSet(idxKey, (cur + 1) % poolLen);
+    return cur;
+  }
+
+  // Chooses today's source + item, advancing the relevant no-repeat cursor(s)
+  // — but only once we're sure we actually have a pool ready to pick from,
+  // so a pool that's still loading can't corrupt the hadith/tafsir ping-pong.
+  function pickDailyBenefit(){
+    if (new Date().getDay() === 5){ // Friday
+      const i = rotate('mohtasab_athar_idx', atharPool.length);
+      return { source:'athar', item: atharPool[i] };
+    }
+
+    const preferred = Number(safeGet('mohtasab_altsource_idx') || 0) === 0 ? 'hadith' : 'tafsir';
+    const pools = { hadith: hadithPool, tafsir: tafsirPool };
+    const other = preferred === 'hadith' ? 'tafsir' : 'hadith';
+
+    let source = null;
+    if (pools[preferred] && pools[preferred].length) source = preferred;
+    else if (pools[other] && pools[other].length) source = other;
+    if (!source) return null; // neither pool loaded yet this session
+
+    const altCur = Number(safeGet('mohtasab_altsource_idx') || 0);
+    safeSet('mohtasab_altsource_idx', altCur === 0 ? 1 : 0);
+    const idxKey = source === 'hadith' ? 'mohtasab_hadith_idx' : 'mohtasab_tafsir_idx';
+    const i = rotate(idxKey, pools[source].length);
+    return { source, item: pools[source][i] };
+  }
+
+  function getDailyBenefit(){
+    const today = todayKey();
+    let stored = null;
+    try{ stored = JSON.parse(safeGet(DAILY_BENEFIT_KEY) || 'null'); }catch(e){}
+
+    if (stored && stored.date === today){
+      if (stored.source === 'athar') return { source:'athar', item: atharPool[stored.poolIndex] };
+      if (stored.source === 'hadith' && hadithPool && hadithPool[stored.poolIndex] !== undefined){
+        return { source:'hadith', item: hadithPool[stored.poolIndex] };
+      }
+      if (stored.source === 'tafsir' && tafsirPool && tafsirPool[stored.poolIndex] !== undefined){
+        return { source:'tafsir', item: tafsirPool[stored.poolIndex] };
+      }
+      return null; // today's source already decided, just not loaded in this session yet
+    }
+
+    const picked = pickDailyBenefit();
+    if (!picked) return null;
+    const poolIndex = picked.source === 'athar' ? atharPool.indexOf(picked.item)
+      : picked.source === 'hadith' ? hadithPool.indexOf(picked.item)
+      : tafsirPool.indexOf(picked.item);
+    safeSet(DAILY_BENEFIT_KEY, JSON.stringify({ date: today, source: picked.source, poolIndex }));
+    return picked;
+  }
+
+  function renderDailyBenefit(){
+    if (!el.dailyBenefitBody) return;
+    const benefit = getDailyBenefit();
+    if (!benefit){
+      el.dailyBenefitBody.innerHTML = '<p class="sources-note">جاري تحميل قاعدة الفوائد اليومية… (يحتاج اتصالًا بالإنترنت أول مرة فقط)</p>';
+      return;
+    }
+    const { source, item } = benefit;
+    let labelLine, bodyText, sourceLine;
+    if (source === 'hadith'){
+      labelLine = '📕 حديث نبوي';
+      bodyText = '«' + item.text + '»';
+      sourceLine = 'صحيح البخاري — الحديث رقم ' + toArabicNum(item.number);
+    } else if (source === 'tafsir'){
+      labelLine = '📖 تفسير ميسّر';
+      bodyText = item.text;
+      sourceLine = 'التفسير الميسّر — مجمع الملك فهد لطباعة المصحف الشريف — ' + item.surahName + ' (' + toArabicNum(item.ayah) + ')';
+    } else {
+      labelLine = '🕊️ ' + (item.label || 'من أثر السلف والصحابة');
+      bodyText = item.text;
+      sourceLine = 'موسوعة الأخلاق والسلوك — الدرر السنية (dorar.net)' + (item.source ? ' — ' + item.source : '');
+    }
+    el.dailyBenefitBody.innerHTML =
+      '<p class="sources-note"><b>' + labelLine + '</b></p>' +
+      '<p class="benefit-text">' + bodyText + '</p>' +
+      '<p class="sources-note">' + sourceLine + '</p>';
+  }
+
+  function openDailyBenefitSection(){
+    if (!el.dailyBenefitBox) return;
+    el.dailyBenefitBox.setAttribute('open', '');
+    el.dailyBenefitBox.scrollIntoView({ behavior:'smooth', block:'start' });
   }
 
   // Reusable niyyah/note strings so the three levels stay wordfor-word
@@ -824,11 +981,13 @@
           return;
         }
         safeSet(key,'1');
-        const snip = knowledgeSnippets[nextSnippetIndex()];
+        // The notification itself never shows the actual content anymore —
+        // just a fixed nudge; tapping it opens "فائدة اليوم" in the app,
+        // which is where today's actual hadith/tafsir/athar is shown.
         if (document.visibilityState === 'visible'){
-          showBanner(snip.icon+' '+snip.title+' — ', snip.text);
+          showBanner('📖 اطّلع على فائدة اليوم', ' — اضغط لقراءتها');
         } else {
-          notifyBackground(snip.icon+' '+snip.title, snip.text, 'light-'+idx, false);
+          notifyBackground('📖 اطّلع على فائدة اليوم', 'اضغط لقراءتها', 'daily-benefit', false);
         }
       };
       if (delay <= 0) timers.push(setTimeout(fire, 600));
@@ -1177,6 +1336,7 @@
 
   function applyPendingSlotAction(){
     if (!pendingSlotAction) return;
+    if (pendingSlotAction.slot === 'daily-benefit'){ openDailyBenefitSection(); return; }
     const slot = slotsToday.find(s => s.id === pendingSlotAction.slot);
     if (!slot || isFired(slot.id)) return;
     if (pendingSlotAction.autocomplete) autoCompleteQuranSlot(slot.id);
@@ -1184,10 +1344,11 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=13').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=14').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
+        if (data.slot === 'daily-benefit'){ openDailyBenefitSection(); return; }
         const slot = slotsToday.find(s => s.id === data.slot);
         if (slot && !isFired(slot.id)) openOverlayForSlot(slot);
       } else if (data.type === 'AUTO_COMPLETE_SLOT'){
@@ -1199,6 +1360,9 @@
   // either way — FCM or the local fallback) before scheduling starts, so
   // triggerSlot() has a settled fcmActive value the first time it runs.
   fetchQuran();
+  fetchTafsirPool();
+  fetchHadithPool();
+  renderDailyBenefit(); // shows immediately on Fridays (athar is static); a loading note otherwise until a pool arrives
   initFirebaseMessaging().then(() => {
     initSchedule();
     scheduleMidnightRefresh();

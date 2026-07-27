@@ -240,6 +240,7 @@
   .sources-box ul{ padding-right:18px; display:flex; flex-direction:column; gap:6px; }
   .sources-box li{ font-size:0.8rem; color:#5a6a63; line-height:1.8; }
   .sources-box li b{ color:var(--ink); }
+  .benefit-text{ font-size:0.92rem; line-height:1.9; color:var(--ink); margin-bottom:10px; }
 
   /* ================= FULL SCREEN OVERLAY ================= */
   .overlay{
@@ -510,6 +511,13 @@
     <div class="slot-list" id="slotList"></div>
   </div>
 
+  <details class="sources-box" id="dailyBenefitBox">
+    <summary>📖 فائدة اليوم</summary>
+    <div id="dailyBenefitBody">
+      <p class="sources-note">جاري تحميل قاعدة الفوائد اليومية…</p>
+    </div>
+  </details>
+
   <div class="niyyah-strip">
     <div class="ic">🕊️</div>
     <p><b>لماذا النية أولًا؟</b> «إنما الأعمال بالنيات، وإنما لكل امرئ ما نوى» — متفق عليه: رواه البخاري (١) ومسلم (١٩٠٧). مُحْتَسَب يبدأ كل تذكير باستحضار قصير للنية حتى تكون عادتك اليومية عبادة خالصة، لا مجرد عادة.</p>
@@ -522,7 +530,10 @@
       <li><b>صحيح البخاري</b> و<b>صحيح مسلم</b> — الأحاديث المتفق عليها.</li>
       <li><b>سنن أبي داود</b> و<b>جامع الترمذي</b> و<b>مسند الإمام أحمد</b> — لما لم يُخرَّج في الصحيحين.</li>
       <li><b>المصحف العثماني</b> — عبر واجهة Al Quran Cloud البرمجية، محمَّل ومخزَّن محليًا.</li>
+      <li><b>التفسير الميسّر</b> — مجمع الملك فهد لطباعة المصحف الشريف، عبر نفس واجهة Al Quran Cloud.</li>
+      <li><b>صحيح البخاري كاملًا</b> — عبر واجهة hadith-api (fawazahmed0)، محمَّل ومخزَّن محليًا.</li>
       <li><b>مجموع فتاوى شيخ الإسلام ابن تيمية</b> — للأثر المنقول عنه بنصه.</li>
+      <li><b>موسوعة الأخلاق والسلوك</b> — الدرر السنية (dorar.net) — لآثار وقصص السلف والصحابة المعروضة يوم الجمعة.</li>
       <li>التحقق من درجة كل حديث (صحيح/حسن) وتخريجه عبر <b>الدرر السنية</b> (dorar.net) و<b>موسوعة الحديث</b> (sunnah.com).</li>
     </ul>
   </details>
@@ -613,6 +624,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
