@@ -4,6 +4,8 @@
 // deploy units), so any change to the reminder schedule must be applied by
 // hand in both places.
 
+const { DateTime } = require('luxon');
+
 const SLOT_FAJR    = { id:'fajr',    mode:'quran',  label:'تذكير الفجر',      offsetOf:'Fajr',    offsetMin:15  };
 const SLOT_DUHA    = { id:'duha',    mode:'dhikr',  label:'تذكير الضحى',      offsetOf:'Sunrise', offsetMin:90  };
 const SLOT_DHUHR   = { id:'dhuhr',   mode:'dhikr',  label:'تذكير قبل الظهر',  offsetOf:'Dhuhr',   offsetMin:-30 };
@@ -20,25 +22,28 @@ const LEVELS = {
 
 function getLevel(levelId){ return LEVELS[levelId] || LEVELS.medium; }
 
-function parseHM(hm, base){
-  const [h, m] = hm.replace(/\s*\(.*\)/, '').split(':').map(Number);
-  const d = new Date(base);
-  d.setHours(h, m, 0, 0);
-  return d;
+function parseHM(hm){
+  const cleaned = hm.replace(/\s*\(.*\)/, '');
+  const [h, m] = cleaned.split(':').map(Number);
+  return { h, m };
 }
 
-function computeSlotTimes(levelId, timings, base){
-  base = base || new Date();
+// dateKey is 'yyyy-LL-dd' — the calendar date, in `timezone`, that `timings`
+// was fetched for. Building each slot as an explicit zoned DateTime (instead
+// of mutating the process's local TZ) keeps this correct and concurrency-safe
+// across users in different timezones being processed in the same tick.
+function computeSlotTimes(levelId, timings, timezone, dateKey){
+  const [year, month, day] = dateKey.split('-').map(Number);
   return getLevel(levelId).slots.map(def => {
-    let t;
+    let dt;
     if (def.offsetOf){
-      t = parseHM(timings[def.offsetOf], base);
-      t = new Date(t.getTime() + def.offsetMin * 60000);
+      const { h, m } = parseHM(timings[def.offsetOf]);
+      dt = DateTime.fromObject({ year, month, day, hour: h, minute: m }, { zone: timezone });
+      dt = dt.plus({ minutes: def.offsetMin });
     } else {
-      t = new Date(base);
-      t.setHours(def.fixedHour, def.fixedMin, 0, 0);
+      dt = DateTime.fromObject({ year, month, day, hour: def.fixedHour, minute: def.fixedMin }, { zone: timezone });
     }
-    return Object.assign({}, def, { time: t });
+    return Object.assign({}, def, { time: dt.toJSDate() });
   });
 }
 

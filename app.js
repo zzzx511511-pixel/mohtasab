@@ -5,6 +5,19 @@
   const arabicDigits = ['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
   function toArabicNum(n){ return String(n).split('').map(d => arabicDigits[Number(d)] ?? d).join(''); }
   function pad2(n){ return String(n).padStart(2,'0'); }
+  // 12-hour display (ص/م) instead of 24-hour, in Arabic-Indic digits — used
+  // everywhere a computed slot/prayer time is shown to the user.
+  function formatTime12(hour24, minute){
+    const period = hour24 < 12 ? 'ص' : 'م';
+    const h12 = hour24 % 12 || 12;
+    return toArabicNum(h12) + ':' + toArabicNum(pad2(minute)) + ' ' + period;
+  }
+  function formatAladhanTime12(hm){
+    const cleaned = (hm || '').replace(/\s*\(.*\)/, '');
+    const [h, m] = cleaned.split(':').map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return cleaned;
+    return formatTime12(h, m);
+  }
   function todayKey(d){ d = d || new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
   function safeGet(key){ try{ return localStorage.getItem(key); }catch(e){ return null; } }
   function safeSet(key,val){ try{ localStorage.setItem(key,val); return true; }catch(e){ return false; } }
@@ -661,11 +674,10 @@
     { key:'Maghrib', label:'المغرب' },
     { key:'Isha',    label:'العشاء' }
   ];
-  function cleanTime(hm){ return (hm || '').replace(/\s*\(.*\)/, ''); }
   function renderPrayerTimesList(timings){
     if (!timings || !el.prayerTimesList) return;
     el.prayerTimesList.innerHTML = PRAYER_DISPLAY.map(p =>
-      '<div class="slot-item"><b>' + p.label + '</b><span>' + cleanTime(timings[p.key]) + '</span></div>'
+      '<div class="slot-item"><b>' + p.label + '</b><span>' + formatAladhanTime12(timings[p.key]) + '</span></div>'
     ).join('');
   }
 
@@ -847,8 +859,7 @@
       const done = isFired(slot.id);
       const due = !done && slot.time <= now;
       row.className = 'slot-item' + (done ? ' done' : '') + (due ? ' due' : '');
-      const hh = slot.time.getHours(), mm = slot.time.getMinutes();
-      const timeStr = toArabicNum(pad2(hh)) + ':' + toArabicNum(pad2(mm));
+      const timeStr = formatTime12(slot.time.getHours(), slot.time.getMinutes());
       row.innerHTML = '<span class="lbl"><span class="st"></span>'+slot.icon+' '+slot.label+'</span><b>'+timeStr+(done?' ✓':'')+'</b>';
       el.slotList.appendChild(row);
     });
@@ -858,8 +869,7 @@
     const now = new Date();
     const upcoming = slotsToday.filter(s => !isFired(s.id) && s.time > now).sort((a,b)=>a.time-b.time)[0];
     if (upcoming){
-      const hh = pad2(upcoming.time.getHours()), mm = pad2(upcoming.time.getMinutes());
-      el.nextSlot.textContent = '⏳ التنبيه القادم: ' + upcoming.label + ' — الساعة ' + toArabicNum(hh)+':'+toArabicNum(mm);
+      el.nextSlot.textContent = '⏳ التنبيه القادم: ' + upcoming.label + ' — الساعة ' + formatTime12(upcoming.time.getHours(), upcoming.time.getMinutes());
     } else {
       const dueNow = slotsToday.filter(s => !isFired(s.id) && s.time <= now)[0];
       el.nextSlot.textContent = dueNow ? '🔔 حان وقت: ' + dueNow.label : '✅ أتممت كل تنبيهات اليوم — بارك الله فيك';
@@ -1174,7 +1184,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=12').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=13').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
