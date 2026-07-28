@@ -19,6 +19,24 @@
     return formatTime12(h, m);
   }
   function todayKey(d){ d = d || new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+
+  // Hijri + Gregorian date badge — Intl.DateTimeFormat's built-in Islamic
+  // calendar support, no external API call needed.
+  let dateBadgeShownFor = null;
+  function renderDateBadge(){
+    if (!el.dateBadge) return;
+    const key = todayKey();
+    if (dateBadgeShownFor === key) return;
+    dateBadgeShownFor = key;
+    const now = new Date();
+    try{
+      const hijri = new Intl.DateTimeFormat('ar-SA-u-ca-islamic', { weekday:'long', day:'numeric', month:'long', year:'numeric', era:'short' }).format(now);
+      // 'ar-SA' alone isn't reliably Gregorian — some engines default the
+      // Saudi locale to the Islamic calendar too, so force it explicitly.
+      const gregorian = new Intl.DateTimeFormat('ar-SA-u-ca-gregory', { day:'numeric', month:'long', year:'numeric', era:'short' }).format(now);
+      el.dateBadge.textContent = hijri + ' | ' + gregorian;
+    }catch(e){ /* unsupported locale/calendar in this browser — leave the badge empty rather than show something wrong */ }
+  }
   function safeGet(key){ try{ return localStorage.getItem(key); }catch(e){ return null; } }
   function safeSet(key,val){ try{ localStorage.setItem(key,val); return true; }catch(e){ return false; } }
 
@@ -43,6 +61,7 @@
     metaSession: document.getElementById('metaSession'),
     metaPct: document.getElementById('metaPct'),
     khatmahBadge: document.getElementById('khatmahBadge'),
+    dateBadge: document.getElementById('dateBadge'),
     cityBadge: document.getElementById('cityBadge'),
     cityLabel: document.getElementById('cityLabel'),
     nextSlot: document.getElementById('nextSlot'),
@@ -84,7 +103,15 @@
     levelOptions: document.getElementById('levelOptions'),
     levelModalCancel: document.getElementById('levelModalCancel'),
     dailyBenefitBox: document.getElementById('dailyBenefitBox'),
-    dailyBenefitBody: document.getElementById('dailyBenefitBody')
+    dailyBenefitBody: document.getElementById('dailyBenefitBody'),
+    btnContactUs: document.getElementById('btnContactUs'),
+    contactModalBackdrop: document.getElementById('contactModalBackdrop'),
+    contactName: document.getElementById('contactName'),
+    contactEmail: document.getElementById('contactEmail'),
+    contactMessage: document.getElementById('contactMessage'),
+    contactModalNote: document.getElementById('contactModalNote'),
+    contactModalCancel: document.getElementById('contactModalCancel'),
+    contactModalSend: document.getElementById('contactModalSend')
   };
 
   el.bannerClose.addEventListener('click', (e) => { e.stopPropagation(); el.banner.classList.remove('show'); });
@@ -774,6 +801,14 @@
   }
 
   function initFirebaseMessaging(){
+    // Initialize the Firebase app as soon as the SDK is present, independent
+    // of notification permission — Firestore (used by the contact form) has
+    // nothing to do with notifications and must keep working even for users
+    // who deny them.
+    if (typeof firebase !== 'undefined'){
+      try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){ /* already initialized */ }
+    }
+
     const requestPermission = () => new Promise(resolve => {
       if (!('Notification' in window)){ resolve('unsupported'); return; }
       if (Notification.permission !== 'default'){ resolve(Notification.permission); return; }
@@ -784,7 +819,6 @@
 
     return requestPermission().then(permission => {
       if (permission !== 'granted' || typeof firebase === 'undefined' || !('serviceWorker' in navigator)) return null;
-      try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){ /* already initialized */ }
       if (!firebase.messaging || !firebase.messaging.isSupported || !firebase.messaging.isSupported()) return null;
 
       return withTimeout(
@@ -1285,6 +1319,46 @@
   el.levelModalCancel.addEventListener('click', () => el.levelModalBackdrop.classList.remove('show'));
   el.levelModalBackdrop.addEventListener('click', (e) => { if (e.target === el.levelModalBackdrop) el.levelModalBackdrop.classList.remove('show'); });
 
+  /* ================= Contact form (Firestore, no personal ID required) ================= */
+  el.btnContactUs.addEventListener('click', () => {
+    el.contactModalNote.textContent = '';
+    el.contactName.value = '';
+    el.contactEmail.value = '';
+    el.contactMessage.value = '';
+    el.contactModalBackdrop.classList.add('show');
+    el.contactMessage.focus();
+  });
+  el.contactModalCancel.addEventListener('click', () => el.contactModalBackdrop.classList.remove('show'));
+  el.contactModalBackdrop.addEventListener('click', (e) => { if (e.target === el.contactModalBackdrop) el.contactModalBackdrop.classList.remove('show'); });
+
+  el.contactModalSend.addEventListener('click', () => {
+    const message = el.contactMessage.value.trim();
+    if (!message){
+      el.contactModalNote.textContent = 'الرجاء كتابة رسالة قبل الإرسال.';
+      el.contactMessage.focus();
+      return;
+    }
+    if (typeof firebase === 'undefined' || !firebase.firestore){
+      el.contactModalNote.textContent = 'تعذّر الاتصال بالخدمة — تحقق من الإنترنت وحاول مرة أخرى.';
+      return;
+    }
+    el.contactModalSend.disabled = true;
+    el.contactModalNote.textContent = 'جارٍ الإرسال…';
+    firebase.firestore().collection('contactMessages').add({
+      name: el.contactName.value.trim() || null,
+      email: el.contactEmail.value.trim() || null,
+      message,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+      el.contactModalBackdrop.classList.remove('show');
+      showToast('✅ تم استلام رسالتك، شكرًا لتواصلك');
+    }).catch(() => {
+      el.contactModalNote.textContent = 'تعذّر إرسال الرسالة — حاول مرة أخرى لاحقًا.';
+    }).finally(() => {
+      el.contactModalSend.disabled = false;
+    });
+  });
+
   /* ================= Init ================= */
   function initSchedule(){
     el.nextSlot.textContent = '⏳ يحسب مواعيد التنبيهات…';
@@ -1299,7 +1373,7 @@
   function scheduleMidnightRefresh(){
     const now = new Date();
     const next = new Date(now); next.setHours(24,0,5,0);
-    setTimeout(() => { initSchedule(); scheduleMidnightRefresh(); }, next.getTime()-now.getTime());
+    setTimeout(() => { initSchedule(); renderDateBadge(); scheduleMidnightRefresh(); }, next.getTime()-now.getTime());
   }
 
   document.addEventListener('visibilitychange', () => {
@@ -1344,7 +1418,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=14').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=15').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
@@ -1359,6 +1433,7 @@
   // initFirebaseMessaging() itself asks for notification permission (needed
   // either way — FCM or the local fallback) before scheduling starts, so
   // triggerSlot() has a settled fcmActive value the first time it runs.
+  renderDateBadge();
   fetchQuran();
   fetchTafsirPool();
   fetchHadithPool();

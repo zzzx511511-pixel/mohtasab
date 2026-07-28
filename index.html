@@ -70,13 +70,14 @@
   .brand-text .title{ font-weight:900; font-size:1.35rem; letter-spacing:0.5px; color:var(--ink); }
   .brand-text .sub{ font-size:0.72rem; color:var(--forest); opacity:0.85; font-weight:500; }
   .topbar-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .khatmah-badge, .city-badge{
+  .khatmah-badge, .city-badge, .date-badge{
     font-size:0.78rem; font-weight:700; color:var(--forest);
     background:var(--paper); border:1px solid var(--line);
     padding:7px 14px; border-radius:999px; box-shadow:var(--shadow);
     white-space:nowrap; cursor:pointer;
   }
   .city-badge{ display:inline-flex; align-items:center; gap:6px; }
+  .date-badge{ cursor:default; }
 
   .wrap{ position:relative; z-index:1; max-width:960px; margin:0 auto; padding:18px 20px 80px; }
 
@@ -414,13 +415,16 @@
   }
   .modal h3{ font-size:1.05rem; font-weight:800; color:var(--ink); margin-bottom:14px; }
   .modal label{ font-size:0.8rem; font-weight:700; color:var(--forest); display:block; margin-top:12px; margin-bottom:6px; }
-  .modal input{
+  .modal input, .modal textarea{
     width:100%; padding:11px 12px; border-radius:10px; border:1.4px solid var(--line);
     font-family:'Tajawal',sans-serif; font-size:0.9rem; background:#fff; color:var(--ink);
   }
+  .modal textarea{ resize:vertical; min-height:90px; }
+  .modal label .hint{ font-weight:400; color:#8a9089; font-size:0.72rem; }
   .modal-actions{ margin-top:18px; display:flex; gap:10px; }
   .modal-actions .btn{ flex:1; justify-content:center; }
   .modal-note{ margin-top:10px; font-size:0.72rem; color:#8a9089; line-height:1.7; }
+  .contact-cta{ margin-top:16px; text-align:center; }
 
   .level-option{
     width:100%; text-align:right; background:#faf8f2; border:1.6px solid var(--line);
@@ -455,6 +459,7 @@
     </div>
   </div>
   <div class="topbar-right">
+    <div class="date-badge" id="dateBadge"></div>
     <button class="city-badge" id="cityBadge" type="button">📍 <span id="cityLabel">الرياض</span></button>
     <button class="city-badge" id="levelBadge" type="button"><span id="levelLabel">متوسطة</span></button>
     <div class="khatmah-badge" id="khatmahBadge">📖 الختمة رقم ١</div>
@@ -538,6 +543,10 @@
     </ul>
   </details>
 
+  <div class="contact-cta">
+    <button class="btn btn-outline" id="btnContactUs" type="button">📩 تواصل معنا</button>
+  </div>
+
   <div class="foot">
     <div>مُحْتَسَب — المحتوى مُستقى من القرآن الكريم والسنة الصحيحة، بتوثيق كامل لكل ذكر وآية (انظر «المصادر» أعلاه)</div>
     <div id="dataStatus"></div>
@@ -618,12 +627,30 @@
   </div>
 </div>
 
+<!-- contact-us modal -->
+<div class="modal-backdrop" id="contactModalBackdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
+    <h3 id="contactModalTitle">📩 تواصل معنا</h3>
+    <label for="contactName">الاسم (اختياري)</label>
+    <input id="contactName" type="text" autocomplete="off">
+    <label for="contactEmail">البريد الإلكتروني <span class="hint">(اختياري — فقط لو تبي رد مباشر)</span></label>
+    <input id="contactEmail" type="email" autocomplete="off">
+    <label for="contactMessage">الرسالة</label>
+    <textarea id="contactMessage"></textarea>
+    <div class="modal-note" id="contactModalNote"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" id="contactModalCancel" type="button">إلغاء</button>
+      <button class="btn btn-primary" id="contactModalSend" type="button">إرسال</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>
