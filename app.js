@@ -65,6 +65,9 @@
     cityBadge: document.getElementById('cityBadge'),
     cityLabel: document.getElementById('cityLabel'),
     nextSlot: document.getElementById('nextSlot'),
+    notifyBanner: document.getElementById('notifyBanner'),
+    notifyBannerText: document.getElementById('notifyBannerText'),
+    btnEnableNotifications: document.getElementById('btnEnableNotifications'),
     slotList: document.getElementById('slotList'),
     prayerTimesList: document.getElementById('prayerTimesList'),
     dataStatus: document.getElementById('dataStatus'),
@@ -800,36 +803,23 @@
     }catch(e){}
   }
 
-  function initFirebaseMessaging(){
-    // Initialize the Firebase app as soon as the SDK is present, independent
-    // of notification permission — Firestore (used by the contact form) has
-    // nothing to do with notifications and must keep working even for users
-    // who deny them.
-    if (typeof firebase !== 'undefined'){
-      try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){ /* already initialized */ }
-    }
-
-    const requestPermission = () => new Promise(resolve => {
-      if (!('Notification' in window)){ resolve('unsupported'); return; }
-      if (Notification.permission !== 'default'){ resolve(Notification.permission); return; }
-      try{ Notification.requestPermission().then(resolve).catch(() => resolve('denied')); }
-      catch(e){ resolve('denied'); }
-    });
+  // Registers the FCM token — call ONLY once Notification.permission is
+  // already 'granted' (checked by every caller below). Safari/iOS silently
+  // drops requestPermission() unless it's called directly inside a user
+  // gesture handler, so nothing in here ever calls it itself.
+  function activateFcm(){
+    if (typeof firebase === 'undefined' || !('serviceWorker' in navigator)) return Promise.resolve(false);
+    if (!firebase.messaging || !firebase.messaging.isSupported || !firebase.messaging.isSupported()) return Promise.resolve(false);
     const withTimeout = (p, ms) => Promise.race([p, new Promise(res => setTimeout(() => res(null), ms))]);
 
-    return requestPermission().then(permission => {
-      if (permission !== 'granted' || typeof firebase === 'undefined' || !('serviceWorker' in navigator)) return null;
-      if (!firebase.messaging || !firebase.messaging.isSupported || !firebase.messaging.isSupported()) return null;
-
-      return withTimeout(
-        firebase.auth().signInAnonymously()
-          .then(cred => { fcmUid = cred.user.uid; return navigator.serviceWorker.ready; })
-          .then(reg => firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg }))
-          .then(token => token ? saveUserProfile(token).then(() => token) : null)
-          .catch(() => null),
-        8000
-      );
-    }).then(token => {
+    return withTimeout(
+      firebase.auth().signInAnonymously()
+        .then(cred => { fcmUid = cred.user.uid; return navigator.serviceWorker.ready; })
+        .then(reg => firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg }))
+        .then(token => token ? saveUserProfile(token).then(() => token) : null)
+        .catch(() => null),
+      8000
+    ).then(token => {
       fcmToken = token || null;
       fcmActive = !!token;
       if (fcmActive){
@@ -841,6 +831,57 @@
       }
       return fcmActive;
     }).catch(() => { fcmActive = false; return false; });
+  }
+
+  // Reflects live Notification.permission — 'default' shows the enable
+  // banner+button, 'denied' shows a quiet note (no button — browsers never
+  // let you re-prompt, only the user's own device/browser settings can),
+  // 'granted' (or unsupported) hides the banner entirely.
+  function renderNotificationBanner(){
+    if (!el.notifyBanner) return;
+    const permission = ('Notification' in window) ? Notification.permission : 'unsupported';
+    if (permission === 'granted' || permission === 'unsupported'){
+      el.notifyBanner.style.display = 'none';
+      return;
+    }
+    el.notifyBanner.style.display = 'flex';
+    if (permission === 'denied'){
+      el.notifyBanner.classList.add('denied');
+      el.notifyBannerText.textContent = '🔕 الإشعارات معطّلة على هذا الجهاز — يمكنك تفعيلها لاحقًا من إعدادات المتصفح أو الجهاز.';
+      el.btnEnableNotifications.style.display = 'none';
+    } else {
+      el.notifyBanner.classList.remove('denied');
+      el.notifyBannerText.textContent = '🔔 فعّل الإشعارات عشان توصلك التذكيرات حتى لو التطبيق مقفول';
+      el.btnEnableNotifications.style.display = '';
+    }
+  }
+
+  el.btnEnableNotifications.addEventListener('click', () => {
+    if (!('Notification' in window)) return;
+    // Notification.requestPermission() called synchronously right here,
+    // directly inside the click handler — no setTimeout/await before it —
+    // is what makes this actually work on Safari/iOS.
+    Notification.requestPermission().then(permission => {
+      renderNotificationBanner();
+      if (permission === 'granted') activateFcm().then(() => renderNotificationBanner());
+    });
+  });
+
+  function initFirebaseMessaging(){
+    // Initialize the Firebase app as soon as the SDK is present, independent
+    // of notification permission — Firestore (used by the contact form) has
+    // nothing to do with notifications and must keep working even for users
+    // who deny them.
+    if (typeof firebase !== 'undefined'){
+      try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){ /* already initialized */ }
+    }
+    renderNotificationBanner();
+
+    // Only proceed automatically if permission was already granted in an
+    // earlier visit — never request it here, that has to come from the
+    // banner button's own click handler (a real user gesture).
+    if (!('Notification' in window) || Notification.permission !== 'granted') return Promise.resolve(false);
+    return activateFcm();
   }
 
   /* ================= Scheduling engine ================= */
@@ -1418,7 +1459,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=15').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=16').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
@@ -1430,9 +1471,10 @@
       }
     });
   }
-  // initFirebaseMessaging() itself asks for notification permission (needed
-  // either way — FCM or the local fallback) before scheduling starts, so
-  // triggerSlot() has a settled fcmActive value the first time it runs.
+  // initFirebaseMessaging() no longer requests permission itself (see
+  // btnEnableNotifications above) — it only activates FCM if permission was
+  // already granted in an earlier visit, so fcmActive is settled one way or
+  // the other before scheduling starts.
   renderDateBadge();
   fetchQuran();
   fetchTafsirPool();
