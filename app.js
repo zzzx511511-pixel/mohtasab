@@ -404,6 +404,16 @@
   const SLOT_ISHA    = { id:'isha',   mode:'dhikr', label:'تذكير قبل العشاء',icon:'📿', offsetOf:'Isha',    offsetMin:-30, niyyah: NOTE.dinner };
   const SLOT_NIGHT   = { id:'night',  mode:'tahlil',label:'تذكير آخر الليل', icon:'🌙', offsetOf:null,      fixedHour:23, fixedMin:0, niyyah: NOTE.night };
 
+  // Static id -> definition lookup, independent of any computed schedule.
+  // Opening the reminder overlay only ever needs mode/label/niyyah/id (never
+  // the computed .time), so a notification tap can open it immediately from
+  // this instead of waiting on slotsToday (which needs location + Aladhan +
+  // FCM init to resolve first) — see applyPendingSlotAction below.
+  const ALL_SLOTS_BY_ID = {
+    fajr: SLOT_FAJR, duha: SLOT_DUHA, dhuhr: SLOT_DHUHR, asr: SLOT_ASR,
+    maghrib: SLOT_MAGHRIB, isha: SLOT_ISHA, night: SLOT_NIGHT
+  };
+
   // The three intensity levels. Tasbih/istighfar/salawat stay fixed at 3 reps
   // everywhere (per the hadith wording) — only the tahlil target, the Quran
   // word-budget per session, and the number/spread of daily reminders scale.
@@ -803,6 +813,21 @@
     }catch(e){}
   }
 
+  let fcmOnMessageWired = false;
+  function applyFcmResult(token){
+    fcmToken = token || null;
+    fcmActive = !!token;
+    if (fcmActive && !fcmOnMessageWired){
+      fcmOnMessageWired = true;
+      firebase.messaging().onMessage(payload => {
+        if (el.overlay.classList.contains('show')) return; // never stack over an open reminder
+        const n = payload.notification || {};
+        if (n.title || n.body) showToast((n.title||'') + (n.body ? ' — ' + n.body : ''));
+      });
+    }
+    return fcmActive;
+  }
+
   // Registers the FCM token — call ONLY once Notification.permission is
   // already 'granted' (checked by every caller below). Safari/iOS silently
   // drops requestPermission() unless it's called directly inside a user
@@ -810,27 +835,25 @@
   function activateFcm(){
     if (typeof firebase === 'undefined' || !('serviceWorker' in navigator)) return Promise.resolve(false);
     if (!firebase.messaging || !firebase.messaging.isSupported || !firebase.messaging.isSupported()) return Promise.resolve(false);
-    const withTimeout = (p, ms) => Promise.race([p, new Promise(res => setTimeout(() => res(null), ms))]);
 
-    return withTimeout(
-      firebase.auth().signInAnonymously()
-        .then(cred => { fcmUid = cred.user.uid; return navigator.serviceWorker.ready; })
-        .then(reg => firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg }))
-        .then(token => token ? saveUserProfile(token).then(() => token) : null)
-        .catch(() => null),
-      8000
-    ).then(token => {
-      fcmToken = token || null;
-      fcmActive = !!token;
-      if (fcmActive){
-        firebase.messaging().onMessage(payload => {
-          if (el.overlay.classList.contains('show')) return; // never stack over an open reminder
-          const n = payload.notification || {};
-          if (n.title || n.body) showToast((n.title||'') + (n.body ? ' — ' + n.body : ''));
-        });
-      }
-      return fcmActive;
-    }).catch(() => { fcmActive = false; return false; });
+    const registration = firebase.auth().signInAnonymously()
+      .then(cred => { fcmUid = cred.user.uid; return navigator.serviceWorker.ready; })
+      .then(reg => firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg }))
+      .then(token => token ? saveUserProfile(token).then(() => token) : null)
+      .catch(() => null);
+
+    // Apply whatever the real result turns out to be whenever it actually
+    // arrives — even after the timeout below has already resolved the
+    // promise this function returns. Without this, a registration that's
+    // just slow (not failed) would leave fcmActive stuck at false for the
+    // rest of the session once the timeout "gives up" — which then makes
+    // triggerSlot() ALSO fire the local fallback notification for every
+    // reminder alongside the real FCM push that (unknown to the client) did
+    // end up registering successfully, producing duplicate notifications.
+    registration.then(applyFcmResult);
+
+    const withTimeout = (p, ms) => Promise.race([p, new Promise(res => setTimeout(() => res(undefined), ms))]);
+    return withTimeout(registration, 8000).then(token => token === undefined ? fcmActive : applyFcmResult(token));
   }
 
   // Reflects live Notification.permission — 'default' shows the enable
@@ -1426,7 +1449,7 @@
   // button, nothing there was gated behind a tap-counter to begin with;
   // dhikr/tahlil never get this shortcut since their counter must be honored.
   function autoCompleteQuranSlot(slotId){
-    const slot = slotsToday.find(s => s.id === slotId);
+    const slot = ALL_SLOTS_BY_ID[slotId];
     if (!slot || slot.mode !== 'quran' || isFired(slot.id)) return;
     if (!state.quranReady || !currentChunk){ showToast('لسّا المصحف يتحمّل، افتح التطبيق لإتمامها 🌱'); return; }
     const wrapped = advanceReadingPosition();
@@ -1449,22 +1472,31 @@
     : null;
   if (pendingSlotAction) history.replaceState(null, '', location.pathname);
 
+  // Uses the static ALL_SLOTS_BY_ID (not slotsToday) so this can act the
+  // instant the app opens from a notification tap, instead of waiting on
+  // the full location+FCM+schedule chain to resolve first — that wait was
+  // the actual source of the multi-second delay between tapping a
+  // notification and the reminder screen appearing. `opened` guards against
+  // re-opening (and resetting) an overlay the user is already interacting
+  // with when this runs a second time later (scheduleToday calls it again
+  // as a fallback); autoComplete doesn't need a guard since isFired() above
+  // already makes a second attempt a no-op once the first one succeeds.
   function applyPendingSlotAction(){
-    if (!pendingSlotAction) return;
-    if (pendingSlotAction.slot === 'daily-benefit'){ openDailyBenefitSection(); return; }
-    const slot = slotsToday.find(s => s.id === pendingSlotAction.slot);
+    if (!pendingSlotAction || pendingSlotAction.opened) return;
+    if (pendingSlotAction.slot === 'daily-benefit'){ pendingSlotAction.opened = true; openDailyBenefitSection(); return; }
+    const slot = ALL_SLOTS_BY_ID[pendingSlotAction.slot];
     if (!slot || isFired(slot.id)) return;
     if (pendingSlotAction.autocomplete) autoCompleteQuranSlot(slot.id);
-    else openOverlayForSlot(slot);
+    else { pendingSlotAction.opened = true; openOverlayForSlot(slot); }
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=17').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=18').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
         if (data.slot === 'daily-benefit'){ openDailyBenefitSection(); return; }
-        const slot = slotsToday.find(s => s.id === data.slot);
+        const slot = ALL_SLOTS_BY_ID[data.slot];
         if (slot && !isFired(slot.id)) openOverlayForSlot(slot);
       } else if (data.type === 'AUTO_COMPLETE_SLOT'){
         autoCompleteQuranSlot(data.slot);
@@ -1477,9 +1509,20 @@
   // the other before scheduling starts.
   renderDateBadge();
   fetchQuran();
-  fetchTafsirPool();
-  fetchHadithPool();
-  renderDailyBenefit(); // shows immediately on Fridays (athar is static); a loading note otherwise until a pool arrives
+  // Open the reminder screen (or complete a Quran slot) right away when
+  // arriving from a notification tap — see applyPendingSlotAction's own
+  // comment for why this doesn't need to wait on initFirebaseMessaging()/
+  // initSchedule() below, which is what used to cause a multi-second delay
+  // between tapping the notification and the reminder actually appearing.
+  applyPendingSlotAction();
+  // Deferred a tick: these have nothing to do with what the user is trying
+  // to see right now, and parsing their (large, cached) JSON on the main
+  // thread competes with the time-critical work just above for no benefit.
+  setTimeout(() => {
+    fetchTafsirPool();
+    fetchHadithPool();
+    renderDailyBenefit(); // shows immediately on Fridays (athar is static); a loading note otherwise until a pool arrives
+  }, 0);
   initFirebaseMessaging().then(() => {
     initSchedule();
     scheduleMidnightRefresh();
