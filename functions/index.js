@@ -12,6 +12,13 @@ const db = admin.firestore();
 // fire several catch-up reminders back-to-back, space them out.
 const MISSED_QUEUE_GAP_MS = 7 * 60 * 1000;
 
+// Server-side version of the client's nagRepeat() in app.js — re-sends an
+// unfinished major reminder a few times, since a single background push is
+// easy to miss and this is the only thing that keeps working with the app
+// fully closed (nagRepeat itself is skipped client-side while FCM is active).
+const NAG_INTERVAL_MS = 3 * 60 * 1000;
+const NAG_MAX = 3;
+
 // Mirrors fetchTimingsByCity/fetchTimingsByCoords in app.js. Aladhan's
 // response also includes data.meta.timezone — the IANA zone it resolved for
 // the requested city/coordinates — which is what lets this function support
@@ -81,12 +88,15 @@ const BODY_BY_MODE = {
 };
 
 // Returns true (sent), 'invalid-token' (caller should drop the token), or
-// false (transient failure — will be retried on the next tick).
-async function sendPush(token, slot){
+// false (transient failure — will be retried on the next tick). `override`
+// lets the nag loop below swap in the "still not done" copy.
+async function sendPush(token, slot, override){
+  const title = (override && override.title) || slot.label;
+  const body = (override && override.body) || (BODY_BY_MODE[slot.mode] || BODY_BY_MODE.dhikr);
   try{
     await admin.messaging().send({
       token,
-      notification: { title: slot.label, body: BODY_BY_MODE[slot.mode] || BODY_BY_MODE.dhikr },
+      notification: { title, body },
       data: { slot: slot.id, mode: slot.mode, tag: slot.id },
       webpush: { headers: { Urgency: 'high' } }
     });
@@ -116,27 +126,27 @@ async function processUser(userDoc){
 
   const now = new Date();
 
-  // firedSlots is a shared "this slot's reminder has been handled" map —
-  // the client writes to it when the user completes a slot in-app (see
-  // syncFiredToCloud in app.js), and this function writes to it once a push
-  // has been sent. Whichever happens first prevents the other from repeating it.
+  // firedSlots: the user genuinely COMPLETED this slot in-app (synced via
+  // syncFiredToCloud in app.js) — the only thing that stops the nag loop.
   const firedSlots = dayState.firedSlots || {};
+  // notified: every slot pushed at least once today, with when and how many
+  // nag re-sends have gone out. Drives the nag loop below, and keeps the
+  // initial-queue step from re-queuing a slot that was already sent.
+  const notified = dayState.notified || {};
   let queue = dayState.missedQueue || [];
   let lastSentAt = dayState.lastSentAt || 0;
+  let tokenInvalidated = false;
 
   const slots = computeSlotTimes(user.level, timings, timezone, dateKey);
+  const slotById = {};
+  slots.forEach(s => { slotById[s.id] = s; });
 
-  // Queue any slot that's newly due, not yet handled, and not already queued.
+  // 1) Queue any slot that's newly due, never sent, not completed, not already queued.
   slots.forEach(s => {
-    if (!firedSlots[s.id] && s.time.getTime() <= now.getTime() && queue.indexOf(s.id) === -1){
+    if (!firedSlots[s.id] && !notified[s.id] && s.time.getTime() <= now.getTime() && queue.indexOf(s.id) === -1){
       queue.push(s.id);
     }
   });
-
-  if (!queue.length){
-    await stateRef.set({ timings, timezone, firedSlots, missedQueue: queue, lastSentAt }, { merge: true });
-    return;
-  }
 
   // Drop anything at the front the client already completed itself.
   while (queue.length && firedSlots[queue[0]]) queue.shift();
@@ -146,25 +156,53 @@ async function processUser(userDoc){
 
   if (queue.length && (isFirstSendToday || gapElapsed)){
     const nextId = queue[0];
-    const nextSlot = slots.find(s => s.id === nextId);
+    const nextSlot = slotById[nextId];
     if (!nextSlot){
       queue.shift(); // stale id (shouldn't normally happen) — drop and move on
     } else {
       const result = await sendPush(user.fcmToken, nextSlot);
       if (result === 'invalid-token'){
-        await userDoc.ref.set({ fcmToken: admin.firestore.FieldValue.delete() }, { merge: true });
-        return;
-      }
-      if (result === true){
+        tokenInvalidated = true;
+      } else if (result === true){
         queue.shift();
-        firedSlots[nextId] = true;
+        notified[nextId] = { notifiedAt: now.getTime(), nagCount: 0 };
         lastSentAt = now.getTime();
       }
       // result === false (transient error): leave queue/lastSentAt untouched, retry next tick.
     }
   }
 
-  await stateRef.set({ timings, timezone, firedSlots, missedQueue: queue, lastSentAt }, { merge: true });
+  // 2) Nag loop — re-sends anything notified-but-not-completed whose gap has
+  // elapsed and hasn't hit NAG_MAX yet. Runs every tick alongside step 1, not
+  // instead of it, so a slot's own nag cycle keeps going regardless of what
+  // else is happening in the missed-slot queue.
+  if (!tokenInvalidated){
+    for (const id of Object.keys(notified)){
+      if (firedSlots[id]){ delete notified[id]; continue; } // completed — stop nagging, clean up
+      const rec = notified[id];
+      if (!rec || rec.nagCount >= NAG_MAX) continue;
+      if (now.getTime() - rec.notifiedAt < NAG_INTERVAL_MS) continue;
+      const slot = slotById[id];
+      if (!slot) continue;
+      const result = await sendPush(user.fcmToken, slot, {
+        title: slot.label + ' ⏰',
+        body: 'لسّا ما أتممته — اضغط لفتحه الآن'
+      });
+      if (result === 'invalid-token'){ tokenInvalidated = true; break; }
+      if (result === true){
+        rec.nagCount += 1;
+        rec.notifiedAt = now.getTime();
+      }
+      // false: leave as-is, retried next tick.
+    }
+  }
+
+  if (tokenInvalidated){
+    await userDoc.ref.set({ fcmToken: admin.firestore.FieldValue.delete() }, { merge: true });
+    return;
+  }
+
+  await stateRef.set({ timings, timezone, firedSlots, notified, missedQueue: queue, lastSentAt }, { merge: true });
 }
 
 exports.checkReminders = functions
