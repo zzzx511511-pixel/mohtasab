@@ -705,10 +705,16 @@
     });
   }
 
+  // Mirrors whichever location resolveLocationAndTimings() just actually
+  // used, so saveUserProfile() (below) can hand the server the same
+  // just-fetched fix instead of triggering its own separate GPS request.
+  let lastResolvedLocation = null;
+
   function resolveLocationAndTimings(){
     const pref = getLocationPref();
 
     if (pref && pref.mode === 'manual'){
+      lastResolvedLocation = { mode:'city', city: pref.city, country: pref.country };
       const cacheKey = 'mohtasab_timings_'+todayKey()+'_manual_'+pref.city;
       const cached = safeGet(cacheKey);
       if (cached){ try{ return Promise.resolve(JSON.parse(cached)); }catch(e){} }
@@ -717,9 +723,12 @@
         .then(t => { safeSet(cacheKey, JSON.stringify(t)); return t; });
     }
 
-    // auto mode: always ask the device for a live position first.
+    // auto mode: always ask the device for a live position first — this is
+    // what makes travelling to a different city get picked up automatically,
+    // since a stale/cached fix is never reused (maximumAge:0 in getFreshPosition).
     return getFreshPosition()
       .then(loc => {
+        lastResolvedLocation = { mode:'coords', lat: loc.lat, lon: loc.lon };
         safeSet(LAST_FIX_KEY, JSON.stringify(loc)); // fallback for next failure only
         el.cityLabel.textContent = 'موقعك الحالي';
         const cacheKey = 'mohtasab_timings_'+todayKey()+'_'+coordKey(loc.lat, loc.lon);
@@ -735,9 +744,11 @@
         let lastFix = null;
         try{ lastFix = JSON.parse(safeGet(LAST_FIX_KEY) || 'null'); }catch(e){}
         if (lastFix){
+          lastResolvedLocation = { mode:'coords', lat: lastFix.lat, lon: lastFix.lon };
           el.cityLabel.textContent = 'آخر موقع معروف';
           return fetchTimingsByCoords(lastFix.lat, lastFix.lon);
         }
+        lastResolvedLocation = { mode:'city', city:'Riyadh', country:'Saudi Arabia' };
         el.cityLabel.textContent = 'الرياض (تقديري)';
         return fetchTimingsByCity('Riyadh', 'Saudi Arabia');
       });
@@ -766,9 +777,13 @@
   let fcmUid = null;
   let fcmToken = null;
 
-  // Best-known location to hand the server, since it has no GPS of its own:
-  // the manually-pinned city as-is, or a fresh/last-known GPS fix in auto mode.
+  // Best-known location to hand the server, since it has no GPS of its own.
+  // Reuses whatever resolveLocationAndTimings() (called via initSchedule())
+  // just resolved — normally always set, since that runs first on every app
+  // open and every daily midnight refresh. The independent fetch below is
+  // only a defensive fallback for the unlikely case this gets called first.
   function computeProfileLocation(){
+    if (lastResolvedLocation) return Promise.resolve(lastResolvedLocation);
     const pref = getLocationPref();
     if (pref && pref.mode === 'manual'){
       return Promise.resolve({ mode:'city', city: pref.city, country: pref.country });
@@ -1322,9 +1337,7 @@
   }
 
   /* ================= Dashboard button wiring ================= */
-  document.getElementById('btnSimulateQuran').addEventListener('click', () => openQuranOverlay(true));
   document.getElementById('btnQuranCard').addEventListener('click', () => openQuranOverlay(true));
-  document.getElementById('btnSimulateDhikr').addEventListener('click', () => openDhikrOverlay(true, null, false, null));
   document.getElementById('btnDhikrCard').addEventListener('click', () => openDhikrOverlay(true, null, false, null));
 
   /* ================= Settings modal (manual city override) ================= */
@@ -1343,9 +1356,9 @@
     el.cityLabel.textContent = cityDisplayName(city);
     el.modalBackdrop.classList.remove('show');
     // Cache keys are now scoped per-city, so the new manual city just gets
-    // its own fresh entry — nothing stale to clean up here.
+    // its own fresh entry — nothing stale to clean up here. initSchedule()
+    // itself resyncs the server-side profile once it resolves.
     initSchedule();
-    resyncProfileIfActive();
     showToast('✅ تم تحديث موقعك ومواعيد اليوم');
   });
 
@@ -1374,8 +1387,8 @@
     renderDashboard();
     // Slot list/ids change with the level — recompute today's schedule under
     // the new list (reuses today's already-cached prayer timings if present).
+    // initSchedule() itself resyncs the server-side profile once it resolves.
     initSchedule();
-    resyncProfileIfActive();
     showToast('✅ تم التحويل لدرجة «' + getLevel().label + '»');
   }
 
@@ -1428,6 +1441,12 @@
     el.nextSlot.textContent = '⏳ يحسب مواعيد التنبيهات…';
     resolveLocationAndTimings().then(timings => {
       scheduleToday(timings);
+      // Keeps the server's copy of the location current too — runs every
+      // time schedule is (re)computed (app open, daily midnight refresh,
+      // manual city/level change), not just once at FCM registration, so
+      // travelling to a different city/timezone gets picked up for the
+      // background push path as well, not just the local in-app one above.
+      resyncProfileIfActive();
     }).catch(() => {
       el.nextSlot.textContent = 'تعذّر حساب مواعيد الصلاة — تحقق من الاتصال أو اضبط المدينة يدويًا 📍';
     });
@@ -1491,7 +1510,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=18').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=19').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
