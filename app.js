@@ -47,9 +47,15 @@
     showToast._t = setTimeout(() => el.toast.classList.remove('show'), 2800);
   }
 
-  function showBanner(title, text){
+  // onTap runs when the banner body (not the ✕) is tapped, or null for
+  // "just show the content, no navigation" — used by occasion reminders
+  // (see OCCASION_REMINDERS below), which show their own text/evidence
+  // directly instead of pointing elsewhere like the daily-benefit banner does.
+  let bannerTapAction = null;
+  function showBanner(title, text, onTap){
     el.bannerText.innerHTML = '<b>'+title+'</b>'+text;
     el.banner.classList.add('show');
+    bannerTapAction = onTap || null;
     clearTimeout(showBanner._t);
     showBanner._t = setTimeout(() => el.banner.classList.remove('show'), 9000);
   }
@@ -118,11 +124,9 @@
   };
 
   el.bannerClose.addEventListener('click', (e) => { e.stopPropagation(); el.banner.classList.remove('show'); });
-  // Tapping the banner itself (not the ✕) opens today's benefit, matching
-  // what a tap on the background notification does.
   el.banner.addEventListener('click', () => {
     el.banner.classList.remove('show');
-    openDailyBenefitSection();
+    if (bannerTapAction) bannerTapAction();
   });
 
   /* ================= Fixed content: dhikr (spec-compliant caps) ================= */
@@ -130,6 +134,12 @@
   // encyclopedias (dorar.net, sunnah.com, hadeethenc.com) before being
   // added — exact wording, narrator, and book/number. Nothing here is
   // paraphrased scholarly opinion without a citable reference.
+
+  // Extra reference shown alongside salawat's own evidence specifically when
+  // it's the Friday "قبل العصر" override (see currentDhikrDef below) — never
+  // replaces the normal salawat evidence, only appended to it that one day.
+  const FRIDAY_SALAWAT_EVIDENCE =
+    "«إن من أفضل أيامكم يوم الجمعة، فيه خُلق آدم، وفيه قُبض، وفيه النفخة، وفيه الصعقة، فأكثروا عليّ من الصلاة فيه، فإن صلاتكم معروضة عليّ» — صحيح: رواه أبو داود (١٠٤٧) والنسائي (١٣٧٤) وابن ماجه (١٦٣٦)، وصححه الألباني.";
 
   // General rotation — cap of 3 repetitions each, per spec section 5.
   const dhikrs = [
@@ -152,6 +162,7 @@
       sources:['bukhari']
     },
     {
+      id:'salawat',
       text:"اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَىٰ نَبِيِّنَا مُحَمَّدٍ",
       meaning:"من صلّى عليّ صلاة واحدة صلّى الله عليه بها عشرًا",
       target:3,
@@ -695,11 +706,22 @@
   function coordKey(lat, lon){ return lat.toFixed(1)+','+lon.toFixed(1); }
 
   function getFreshPosition(){
+    console.log('[مُحتسب:موقع] طلب موقع GPS حي جديد (navigator.geolocation.getCurrentPosition, maximumAge:0)…');
     return new Promise((resolve, reject) => {
-      if (!navigator.geolocation){ reject(new Error('no-geo')); return; }
+      if (!navigator.geolocation){
+        console.log('[مُحتسب:موقع] navigator.geolocation غير متاح بهذا المتصفح/السياق.');
+        reject(new Error('no-geo')); return;
+      }
       navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-        (err) => reject(err),
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          console.log('[مُحتسب:موقع] نجح الجلب — إحداثيات جديدة:', loc, '— دقة القياس:', Math.round(pos.coords.accuracy), 'م');
+          resolve(loc);
+        },
+        (err) => {
+          console.log('[مُحتسب:موقع] فشل الجلب — كود الخطأ:', err.code, '(1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT) — رسالة:', err.message);
+          reject(err);
+        },
         { timeout: 8000, maximumAge: 0 } // maximumAge:0 forces a live fix, not a cached OS one
       );
     });
@@ -714,6 +736,7 @@
     const pref = getLocationPref();
 
     if (pref && pref.mode === 'manual'){
+      console.log('[مُحتسب:موقع] وضع المدينة اليدوية مفعّل («' + pref.city + '») — لن يُطلب GPS إطلاقًا، ولن يتحدث تلقائيًا (بالتصميم).');
       lastResolvedLocation = { mode:'city', city: pref.city, country: pref.country };
       const cacheKey = 'mohtasab_timings_'+todayKey()+'_manual_'+pref.city;
       const cached = safeGet(cacheKey);
@@ -726,21 +749,32 @@
     // auto mode: always ask the device for a live position first — this is
     // what makes travelling to a different city get picked up automatically,
     // since a stale/cached fix is never reused (maximumAge:0 in getFreshPosition).
+    console.log('[مُحتسب:موقع] وضع الموقع التلقائي — بدء التحقق من الموقع الفعلي للجهاز.');
+    let prevFix = null;
+    try{ prevFix = JSON.parse(safeGet(LAST_FIX_KEY) || 'null'); }catch(e){}
+
     return getFreshPosition()
       .then(loc => {
+        const moved = !prevFix || coordKey(loc.lat, loc.lon) !== coordKey(prevFix.lat, prevFix.lon);
+        console.log('[مُحتسب:موقع] المحفوظ سابقًا:', prevFix, '— الجديد الآن:', loc, moved ? '⚠️ تغيّر الموقع' : '(نفس الموقع تقريبًا)');
         lastResolvedLocation = { mode:'coords', lat: loc.lat, lon: loc.lon };
         safeSet(LAST_FIX_KEY, JSON.stringify(loc)); // fallback for next failure only
         el.cityLabel.textContent = 'موقعك الحالي';
         const cacheKey = 'mohtasab_timings_'+todayKey()+'_'+coordKey(loc.lat, loc.lon);
         const cached = safeGet(cacheKey);
-        if (cached){ try{ return Promise.resolve(JSON.parse(cached)); }catch(e){} }
+        if (cached){
+          console.log('[مُحتسب:موقع] مواقيت هذا الموقع لهذا اليوم موجودة بالكاش المحلي — لن يُستدعى Aladhan API مرة ثانية (نفس الموقع، لا حاجة).');
+          try{ return Promise.resolve(JSON.parse(cached)); }catch(e){}
+        }
+        console.log('[مُحتسب:موقع] استدعاء Aladhan API فعليًا بالإحداثيات الجديدة…');
         return fetchTimingsByCoords(loc.lat, loc.lon)
           .then(t => { safeSet(cacheKey, JSON.stringify(t)); return t; });
       })
-      .catch(() => {
+      .catch((err) => {
         // Live GPS failed this time (denied, no signal, offline) — try the
         // last known fix before giving up to Riyadh, but keep mode:'auto' so
         // we try live GPS again on the next open instead of freezing on Riyadh.
+        console.log('[مُحتسب:موقع] تعذّر جلب موقع حي (', err && err.message, ') — الانتقال لآخر موقع محفوظ كخطة بديلة لهذه المرة فقط.');
         let lastFix = null;
         try{ lastFix = JSON.parse(safeGet(LAST_FIX_KEY) || 'null'); }catch(e){}
         if (lastFix){
@@ -1015,6 +1049,7 @@
 
     // Two light knowledge notifications, spaced between the major slots.
     scheduleLightNotifications(slotsToday);
+    scheduleOccasionReminders(timings);
     renderSlotList();
     renderNextSlot();
     applyPendingSlotAction();
@@ -1098,13 +1133,68 @@
         // just a fixed nudge; tapping it opens "فائدة اليوم" in the app,
         // which is where today's actual hadith/tafsir/athar is shown.
         if (document.visibilityState === 'visible'){
-          showBanner('📖 اطّلع على فائدة اليوم', ' — اضغط لقراءتها');
+          showBanner('📖 اطّلع على فائدة اليوم', ' — اضغط لقراءتها', openDailyBenefitSection);
         } else {
           notifyBackground('📖 اطّلع على فائدة اليوم', 'اضغط لقراءتها', 'daily-benefit', false);
         }
       };
       if (delay <= 0) timers.push(setTimeout(fire, 600));
       else timers.push(setTimeout(fire, delay));
+    });
+  }
+
+  // ================= Occasion reminders (extensible — Friday only so far) =================
+  // Entirely separate from the 3/5/7 major reminders: their own timers only
+  // (pushed into the same `timers` array purely so clearTimers() sweeps them
+  // up too on reschedule — they never touch slotsToday/missedQueue/
+  // firedSlots/notified), shown the same banner/background-notification way
+  // as the light "فائدة اليوم" nudge above, and never labelled to the user
+  // as anything beyond their own text+evidence — no "occasion" wording ever
+  // reaches the UI. Adding a future occasion (أيام بيض، اثنين/خميس، رمضان،
+  // شوال، الحج...) is just one more object below; nothing else here changes.
+  const OCCASION_REMINDERS = [
+    {
+      id: 'friday-early',
+      appliesToday: (d) => d.getDay() === 5,
+      computeTime: (timings, base) => new Date(parseHM(timings.Dhuhr, base).getTime() - 60 * 60000),
+      text: 'تذكير بفضل التبكير والاغتسال ليوم الجمعة.',
+      evidence: '«من غسّل يوم الجمعة واغتسل، ثم بكّر وابتكر، ومشى ولم يركب، ودنا من الإمام فاستمع ولم يلغ، كان له بكل خطوة عمل سنة أجر صيامها وقيامها» — رواه أبو داود، صححه الألباني (صحيح أبي داود، رقم ٣٤٥).'
+    },
+    {
+      id: 'friday-last-hour',
+      appliesToday: (d) => d.getDay() === 5,
+      computeTime: (timings, base) => new Date(parseHM(timings.Maghrib, base).getTime() - 60 * 60000),
+      text: 'تذكير بتحري ساعة إجابة الدعاء.',
+      evidence: '«يوم الجمعة اثنتا عشرة ساعة، لا يوجد مسلم يسأل الله فيها شيئًا إلا آتاه، فالتمسوها آخر ساعة بعد العصر» — حسن: رواه أبو داود (١٠٤٨) والنسائي (١٣٨٩).'
+    }
+  ];
+
+  function scheduleOccasionReminders(timings){
+    const now = new Date();
+    OCCASION_REMINDERS.forEach(occ => {
+      if (!occ.appliesToday(now)) return;
+      const key = 'mohtasab_occasion_'+todayKey()+'_'+occ.id;
+      if (safeGet(key) === '1') return;
+      const t = occ.computeTime(timings, now);
+      const delay = t.getTime() - now.getTime();
+      if (delay <= 0) return; // that window already passed today — no catch-up spam for these
+
+      const fire = () => {
+        if (safeGet(key) === '1') return;
+        if (document.visibilityState === 'visible' && el.overlay.classList.contains('show')){
+          // Same courtesy as the light notifications — never stack over an
+          // open major reminder, try again shortly instead.
+          timers.push(setTimeout(fire, 30000));
+          return;
+        }
+        safeSet(key, '1');
+        if (document.visibilityState === 'visible'){
+          showBanner(occ.text, ' ' + occ.evidence, null);
+        } else {
+          notifyBackground(occ.text, occ.evidence, 'occasion-'+occ.id, false);
+        }
+      };
+      timers.push(setTimeout(fire, delay));
     });
   }
 
@@ -1226,6 +1316,15 @@
   function currentDhikrDef(){
     if (state.activeMode === 'tahlil'){
       return Object.assign({}, tahlilSpecial, { target: getLevel().tahlilTarget });
+    }
+    // Friday's "قبل العصر" reminder specifically (the real scheduled slot,
+    // never the manual/practice trigger — that leaves activeSlot null) is
+    // always salawat, never the normal rotation — per the hadith on
+    // multiplying salawat on Friday. Evidence is appended to (not swapped
+    // with) salawat's own normal evidence.
+    if (state.activeSlot === 'asr' && new Date().getDay() === 5){
+      const salawat = dhikrs.find(d => d.id === 'salawat');
+      if (salawat) return Object.assign({}, salawat, { evidence: salawat.evidence.concat(FRIDAY_SALAWAT_EVIDENCE) });
     }
     return dhikrs[state.dhikrIndex % dhikrs.length];
   }
@@ -1437,7 +1536,12 @@
   });
 
   /* ================= Init ================= */
+  // Used by the visibilitychange handler below to avoid re-resolving on
+  // every rapid tab-switch, while still catching a genuine app resume.
+  let lastScheduleAttemptAt = 0;
+
   function initSchedule(){
+    lastScheduleAttemptAt = Date.now();
     el.nextSlot.textContent = '⏳ يحسب مواعيد التنبيهات…';
     resolveLocationAndTimings().then(timings => {
       scheduleToday(timings);
@@ -1459,8 +1563,22 @@
     setTimeout(() => { initSchedule(); renderDateBadge(); scheduleMidnightRefresh(); }, next.getTime()-now.getTime());
   }
 
+  // Mobile PWAs are typically SUSPENDED (not truly closed/reloaded) when the
+  // user switches away and back — so app.js's own top-level init code never
+  // re-runs just because the user "reopened" the app from their home
+  // screen, and the location would otherwise only ever refresh on a genuine
+  // full page reload. Re-resolving on an actual resume (throttled so quick
+  // tab-switching doesn't spam GPS requests) is what makes "opened the app
+  // after landing in a new city" reliably pick up the real location.
+  const VISIBILITY_RESCHEDULE_MIN_GAP_MS = 60 * 1000;
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') renderSlotList(), renderNextSlot();
+    if (document.visibilityState !== 'visible') return;
+    renderSlotList();
+    renderNextSlot();
+    if (Date.now() - lastScheduleAttemptAt >= VISIBILITY_RESCHEDULE_MIN_GAP_MS){
+      console.log('[مُحتسب:موقع] التطبيق أصبح ظاهرًا من جديد (resume) — إعادة التحقق من الموقع الفعلي والمواقيت.');
+      initSchedule();
+    }
   });
 
   // Marks a Quran slot done directly (no overlay) — used by the notification's
@@ -1510,7 +1628,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=19').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=20').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
