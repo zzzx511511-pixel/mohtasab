@@ -1002,7 +1002,16 @@
 
   function firedKey(slotId){ return 'mohtasab_fired_'+todayKey()+'_'+slotId; }
   function isFired(slotId){ return safeGet(firedKey(slotId)) === '1'; }
-  function markFired(slotId){ safeSet(firedKey(slotId), '1'); syncFiredToCloud(slotId); }
+  // Diagnostic: markFired is only ever legitimately called from a real user
+  // action (the "إتمام" button, or a Quran slot's "قرأتها" notification
+  // action) — logging every call with its caller makes any unexpected/bulk
+  // call immediately visible in the console instead of only showing up as
+  // an unexplained ✓ in "مواعيد اليوم".
+  function markFired(slotId){
+    console.log('[مُحتسب:إتمام] markFired(' + slotId + ') — من:', (new Error().stack || '').split('\n')[2] ? (new Error().stack || '').split('\n')[2].trim() : '؟');
+    safeSet(firedKey(slotId), '1');
+    syncFiredToCloud(slotId);
+  }
 
   let slotsToday = [];
   const timers = [];
@@ -1628,7 +1637,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=20').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=21').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
