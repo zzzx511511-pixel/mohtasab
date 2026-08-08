@@ -1083,7 +1083,14 @@
     if (isFired(slot.id)) return;
     if (document.visibilityState === 'visible'){
       openOverlayForSlot(slot);
-    } else if (!fcmActive){
+      return;
+    }
+    // Diagnostic: logs the ACTUAL fcmActive value at the moment this
+    // decision is made — if a local fallback notification is ever reported
+    // alongside a server one, this line (not an assumption) shows whether
+    // the client genuinely believed FCM was inactive at that instant.
+    console.log('[مُحتسب:إشعار] triggerSlot(' + slot.id + ') بالخلفية — fcmActive=' + fcmActive + (fcmActive ? ' (السيرفر مسؤول، لا إشعار محلي)' : ' (سيُرسَل إشعار محلي احتياطي)'));
+    if (!fcmActive){
       // Backgrounded/closed catch-up — only the local fallback path's job.
       // When FCM is active the scheduled Cloud Function delivers this instead.
       notifyBackground(slot.label, 'اضغط لفتح ' + (slot.mode === 'quran' ? 'ورد القرآن' : 'الأذكار') + ' الآن', slot.id, true, slot.mode);
@@ -1094,8 +1101,9 @@
   // A single background notification is easy to miss. Since a real forced
   // full-screen lock isn't possible from a website, the closest free
   // approximation is to re-notify (with sound/vibration) a few times if the
-  // person hasn't acted yet — capped so it isn't annoying.
-  const NAG_INTERVAL_MS = 10 * 60 * 1000;
+  // person hasn't acted yet — capped so it isn't annoying. 90s apart, up to
+  // 3 times (matches the server's own nag interval — see functions/index.js).
+  const NAG_INTERVAL_MS = 90 * 1000;
   const NAG_MAX = 3;
   function nagRepeat(slot, attempt){
     if (attempt > NAG_MAX) return;
@@ -1637,7 +1645,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=21').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=22').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
