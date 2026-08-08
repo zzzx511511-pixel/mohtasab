@@ -654,10 +654,20 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
-<script src="app.js?v=22"></script>
+<!--
+  app.js loads FIRST (both physically first among these `defer` tags, so it
+  executes first — `defer` scripts always run in document order once
+  parsing finishes — and functionally independent of Firebase: nothing at
+  its top level touches the `firebase` global, only functions called later,
+  and initFirebaseMessaging() explicitly waits for it — see waitForFirebaseSdk
+  in app.js). This is what lets a notification tap open the reminder screen
+  immediately, instead of waiting on 4 external gstatic.com script loads
+  that used to block it from even starting when the network was slow.
+-->
+<script src="app.js?v=23" defer></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js" defer></script>
 </body>
 </html>

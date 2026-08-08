@@ -666,10 +666,30 @@
   //                   resolved (not a stored lat/lon), so moving cities — even
   //                   mid-day — is picked up automatically on next open.
   const LOC_KEY = 'mohtasab_location';
+  // No code path writes LOC_KEY except setLocationPref() below, which is
+  // only ever called from the city-settings modal's Save button — there is
+  // no timer, expiry, or scheduled call anywhere in this file that touches
+  // it. If a saved manual city is ever seen reverting to auto/Riyadh, the
+  // raw stored value is logged here so we can tell "the key genuinely
+  // disappeared/corrupted" from "the code silently ignored it".
   function getLocationPref(){
-    try{ return JSON.parse(safeGet(LOC_KEY) || 'null'); }catch(e){ return null; }
+    const raw = safeGet(LOC_KEY);
+    if (raw === null){
+      console.log('[مُحتسب:موقع] LOC_KEY (mohtasab_location) غير موجود بالتخزين المحلي إطلاقًا — الوضع الافتراضي (auto/GPS) سيُستخدم.');
+      return null;
+    }
+    try{
+      const parsed = JSON.parse(raw);
+      return parsed;
+    }catch(e){
+      console.log('[مُحتسب:موقع] ⚠️ LOC_KEY موجود لكن تالف (JSON.parse فشل) — القيمة الخام:', raw, '— سيُعامَل كـ auto/GPS بالخطأ.');
+      return null;
+    }
   }
-  function setLocationPref(loc){ safeSet(LOC_KEY, JSON.stringify(loc)); }
+  function setLocationPref(loc){
+    console.log('[مُحتسب:موقع] setLocationPref استُدعيت:', loc, '— من:', (new Error().stack || '').split('\n')[2] ? (new Error().stack || '').split('\n')[2].trim() : '؟');
+    safeSet(LOC_KEY, JSON.stringify(loc));
+  }
 
   // Last GPS fix kept only as an offline/failure fallback — never treated as current.
   const LAST_FIX_KEY = 'mohtasab_last_fix';
@@ -705,26 +725,50 @@
   // tell Riyadh from Qassim apart so a real move busts the day's cache.
   function coordKey(lat, lon){ return lat.toFixed(1)+','+lon.toFixed(1); }
 
-  function getFreshPosition(){
-    console.log('[مُحتسب:موقع] طلب موقع GPS حي جديد (navigator.geolocation.getCurrentPosition, maximumAge:0)…');
+  // Single getCurrentPosition attempt with the given options, resolving/
+  // rejecting with full diagnostic logging either way.
+  function attemptPosition(opts, label){
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation){
         console.log('[مُحتسب:موقع] navigator.geolocation غير متاح بهذا المتصفح/السياق.');
         reject(new Error('no-geo')); return;
       }
+      console.log('[مُحتسب:موقع] محاولة (' + label + ') — timeout=' + opts.timeout + 'ms enableHighAccuracy=' + opts.enableHighAccuracy + '…');
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const loc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-          console.log('[مُحتسب:موقع] نجح الجلب — إحداثيات جديدة:', loc, '— دقة القياس:', Math.round(pos.coords.accuracy), 'م');
+          console.log('[مُحتسب:موقع] نجحت محاولة (' + label + ') — إحداثيات:', loc, '— دقة القياس:', Math.round(pos.coords.accuracy), 'م');
           resolve(loc);
         },
         (err) => {
-          console.log('[مُحتسب:موقع] فشل الجلب — كود الخطأ:', err.code, '(1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT) — رسالة:', err.message);
+          console.log('[مُحتسب:موقع] فشلت محاولة (' + label + ') — كود:', err.code, '(1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT) — رسالة:', err.message);
           reject(err);
         },
-        { timeout: 8000, maximumAge: 0 } // maximumAge:0 forces a live fix, not a cached OS one
+        opts
       );
     });
+  }
+
+  // A single fast/low-accuracy attempt with no retry was giving up too
+  // easily on marginal signal (weak WiFi/cell-based positioning data,
+  // indoors, just-landed-in-a-new-city cold state) — that premature
+  // failure is what was actually causing "GPS auto mode never noticed I
+  // travelled": every open would fail the one attempt and permanently fall
+  // back to the last successfully-fetched (now stale) fix. Now retries once
+  // with high-accuracy (real GPS chip, not just network positioning) and a
+  // longer timeout before truly giving up — maximumAge:0 throughout so
+  // neither attempt can return a cached OS fix.
+  function getFreshPosition(){
+    if (!navigator.geolocation){
+      console.log('[مُحتسب:موقع] navigator.geolocation غير متاح بهذا المتصفح/السياق.');
+      return Promise.reject(new Error('no-geo'));
+    }
+    return attemptPosition({ timeout: 6000, maximumAge: 0, enableHighAccuracy: false }, 'سريعة عبر الشبكة')
+      .catch(err => {
+        if (err && err.code === 1) throw err; // PERMISSION_DENIED — retrying won't help
+        console.log('[مُحتسب:موقع] إعادة محاولة بدقة عالية (GPS مباشر) بمهلة أطول قبل الاستسلام…');
+        return attemptPosition({ timeout: 15000, maximumAge: 0, enableHighAccuracy: true }, 'دقيقة عبر GPS');
+      });
   }
 
   // Mirrors whichever location resolveLocationAndTimings() just actually
@@ -939,21 +983,46 @@
     });
   });
 
-  function initFirebaseMessaging(){
-    // Initialize the Firebase app as soon as the SDK is present, independent
-    // of notification permission — Firestore (used by the contact form) has
-    // nothing to do with notifications and must keep working even for users
-    // who deny them.
-    if (typeof firebase !== 'undefined'){
-      try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){ /* already initialized */ }
-    }
-    renderNotificationBanner();
+  // app.js now runs BEFORE the Firebase <script defer> tags finish loading
+  // (see index.html — this is deliberate, so a notification tap can open
+  // the reminder screen without waiting on 4 external gstatic.com scripts).
+  // That means `firebase` genuinely isn't defined yet the moment this file
+  // starts executing. Poll briefly instead of checking once and giving up —
+  // this only delays FCM setup, never the overlay-opening path above, which
+  // already ran by the time this is even called (see the bottom of this file).
+  function waitForFirebaseSdk(timeoutMs){
+    return new Promise(resolve => {
+      if (typeof firebase !== 'undefined'){ resolve(true); return; }
+      const start = Date.now();
+      (function check(){
+        if (typeof firebase !== 'undefined'){ resolve(true); return; }
+        if (Date.now() - start >= timeoutMs){
+          console.log('[مُحتسب:FCM] Firebase SDK لم يصل خلال ' + timeoutMs + 'ms — سيُعتمد على الإشعارات المحلية الاحتياطية فقط هذه الجلسة.');
+          resolve(false);
+          return;
+        }
+        setTimeout(check, 150);
+      })();
+    });
+  }
 
-    // Only proceed automatically if permission was already granted in an
-    // earlier visit — never request it here, that has to come from the
-    // banner button's own click handler (a real user gesture).
-    if (!('Notification' in window) || Notification.permission !== 'granted') return Promise.resolve(false);
-    return activateFcm();
+  function initFirebaseMessaging(){
+    return waitForFirebaseSdk(15000).then(available => {
+      // Initialize the Firebase app as soon as the SDK is present, independent
+      // of notification permission — Firestore (used by the contact form) has
+      // nothing to do with notifications and must keep working even for users
+      // who deny them.
+      if (available){
+        try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){ /* already initialized */ }
+      }
+      renderNotificationBanner();
+
+      // Only proceed automatically if permission was already granted in an
+      // earlier visit — never request it here, that has to come from the
+      // banner button's own click handler (a real user gesture).
+      if (!available || !('Notification' in window) || Notification.permission !== 'granted') return false;
+      return activateFcm();
+    });
   }
 
   /* ================= Scheduling engine ================= */
@@ -1645,7 +1714,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=22').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=23').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){
@@ -1657,17 +1726,12 @@
       }
     });
   }
-  // initFirebaseMessaging() no longer requests permission itself (see
-  // btnEnableNotifications above) — it only activates FCM if permission was
-  // already granted in an earlier visit, so fcmActive is settled one way or
-  // the other before scheduling starts.
   renderDateBadge();
   fetchQuran();
   // Open the reminder screen (or complete a Quran slot) right away when
   // arriving from a notification tap — see applyPendingSlotAction's own
   // comment for why this doesn't need to wait on initFirebaseMessaging()/
-  // initSchedule() below, which is what used to cause a multi-second delay
-  // between tapping the notification and the reminder actually appearing.
+  // initSchedule() below.
   applyPendingSlotAction();
   // Deferred a tick: these have nothing to do with what the user is trying
   // to see right now, and parsing their (large, cached) JSON on the main
@@ -1677,8 +1741,17 @@
     fetchHadithPool();
     renderDailyBenefit(); // shows immediately on Fridays (athar is static); a loading note otherwise until a pool arrives
   }, 0);
-  initFirebaseMessaging().then(() => {
-    initSchedule();
-    scheduleMidnightRefresh();
-  });
+  // initFirebaseMessaging() and initSchedule() run CONCURRENTLY, not
+  // chained — they used to be sequential ("so fcmActive is settled before
+  // scheduling starts"), but that meant the whole "مواعيد اليوم" schedule
+  // (and the location/GPS resolution it depends on) sat waiting on
+  // initFirebaseMessaging()'s up-to-15s wait for the Firebase SDK to load
+  // whenever that SDK was slow/unreachable — the exact same class of bug
+  // as the notification-tap delay, just for the main schedule UI instead.
+  // triggerSlot() already re-reads the live fcmActive value at fire time
+  // (and self-corrects if FCM finishes registering slightly late — see
+  // activateFcm()), so there's no correctness need for this ordering.
+  initFirebaseMessaging();
+  initSchedule();
+  scheduleMidnightRefresh();
 })();
