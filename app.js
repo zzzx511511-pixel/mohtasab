@@ -1309,6 +1309,19 @@
       row.className = 'slot-item' + (done ? ' done' : '') + (due ? ' due' : '');
       const timeStr = formatTime12(slot.time.getHours(), slot.time.getMinutes());
       row.innerHTML = '<span class="lbl"><span class="st"></span>'+slot.icon+' '+slot.label+'</span><b>'+timeStr+(done?' ✓':'')+'</b>';
+      // Only overdue-and-not-yet-completed reminders are actionable here —
+      // future slots have nothing to open yet, and completed ones can't be
+      // safely replayed through the same overlay (its "إتمام" button advances
+      // reading position / dhikr index again, double-counting progress).
+      if (due){
+        row.classList.add('clickable');
+        row.setAttribute('role', 'button');
+        row.setAttribute('tabindex', '0');
+        row.addEventListener('click', () => openOverlayForSlot(slot));
+        row.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openOverlayForSlot(slot); }
+        });
+      }
       el.slotList.appendChild(row);
     });
   }
@@ -1714,7 +1727,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=23').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=24').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){

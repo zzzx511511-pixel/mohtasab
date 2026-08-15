@@ -205,6 +205,8 @@
   .slot-item.done .st{ background:var(--teal); }
   .slot-item.due .st{ background:var(--gold); animation: pulse 1.8s ease-in-out infinite; }
   .slot-item b{ color:var(--ink); }
+  .slot-item.clickable{ cursor:pointer; border-radius:8px; transition:background .15s ease; }
+  .slot-item.clickable:hover, .slot-item.clickable:focus-visible{ background:var(--gold-soft); outline:none; }
 
   .niyyah-strip{
     margin-top:20px; background:var(--gold-soft); border:1px dashed var(--gold);
@@ -664,7 +666,7 @@
   immediately, instead of waiting on 4 external gstatic.com script loads
   that used to block it from even starting when the network was slow.
 -->
-<script src="app.js?v=23" defer></script>
+<script src="app.js?v=24" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
