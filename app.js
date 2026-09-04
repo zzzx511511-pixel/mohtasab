@@ -1727,7 +1727,7 @@
   }
 
   if ('serviceWorker' in navigator){
-    navigator.serviceWorker.register('sw.js?v=24').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=25').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       const data = e.data || {};
       if (data.type === 'OPEN_SLOT'){

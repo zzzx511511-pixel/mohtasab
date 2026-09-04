@@ -47,7 +47,7 @@ try{
   // (below) are unaffected and remain the fallback.
 }
 
-const CACHE_NAME = 'mohtasab-cache-v22';
+const CACHE_NAME = 'mohtasab-cache-v23';
 const CORE_ASSETS = [
   './',
   './index.html',

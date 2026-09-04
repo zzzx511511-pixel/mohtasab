@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&family=Amiri:wght@400;700&family=Amiri+Quran&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&family=Amiri:wght@400;700&family=Amiri+Quran&family=Scheherazade+New:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#f4f1ea;
@@ -37,7 +37,7 @@
     min-height:100vh;
     -webkit-font-smoothing:antialiased;
   }
-  .quran-font{ font-family:'Amiri Quran','Amiri', serif; }
+  .quran-font{ font-family:'Scheherazade New','Amiri Quran','Amiri', serif; }
 
   a:focus-visible, button:focus-visible, [tabindex]:focus-visible{
     outline:3px solid var(--teal);
@@ -314,11 +314,11 @@
   }
   .bismillah{
     text-align:center; font-size:clamp(1.15rem, 3.6vw, 1.4rem); font-weight:800;
-    color:#7a5a30; letter-spacing:0.3px;
+    color:#7a5a30;
     padding-bottom:16px; margin-bottom:28px; border-bottom:1.5px dashed var(--gold);
   }
   .ayah{
-    font-family:'Amiri Quran','Amiri',serif;
+    font-family:'Scheherazade New','Amiri Quran','Amiri',serif;
     font-size:clamp(1.35rem, 4.2vw, 1.7rem);
     line-height:2.5; text-align:center; color:var(--ink);
   }
@@ -338,7 +338,7 @@
   }
   .dhikr-tap:active{ transform:scale(0.985); }
   .dhikr-tap .txt{
-    font-family:'Amiri Quran','Amiri',serif; font-size:clamp(1.3rem,4.6vw,1.85rem);
+    font-family:'Scheherazade New','Amiri Quran','Amiri',serif; font-size:clamp(1.3rem,4.6vw,1.85rem);
     color:var(--ink); line-height:2.1;
   }
   .dhikr-tap .translit{ margin-top:10px; font-size:0.78rem; color:#8a9089; }
@@ -666,7 +666,7 @@
   immediately, instead of waiting on 4 external gstatic.com script loads
   that used to block it from even starting when the network was slow.
 -->
-<script src="app.js?v=24" defer></script>
+<script src="app.js?v=25" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
